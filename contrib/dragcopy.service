@@ -1,0 +1,13 @@
+[Unit]
+Description=dragcopy — drag to copy, confirm to paste
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/dragcopy run
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target
