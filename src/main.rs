@@ -36,6 +36,8 @@ enum Cmd {
     Disable,
     /// Flip it.
     Toggle,
+    /// Print mouse button and key events as they arrive (find your confirm key).
+    Watch,
 }
 
 fn hash(text: &str) -> u64 {
@@ -80,6 +82,7 @@ fn main() -> Result<()> {
             runtime::set_control("off");
             println!("off");
         }
+        Cmd::Watch => watch()?,
         Cmd::Toggle => {
             // Base the flip on the control file, not on observed state: the
             // daemon may not be running, and state then never updates.
@@ -264,6 +267,48 @@ fn run() -> Result<()> {
         publish!();
     }
 
+    Ok(())
+}
+
+/// Debug aid: press a button, read its name. Held until Ctrl-C.
+fn watch() -> Result<()> {
+    use std::sync::mpsc::channel;
+    let (tx, rx) = channel::<String>();
+    let mut seen = 0;
+    for (path, mut dev) in evdev::enumerate() {
+        let name = dev.name().unwrap_or("?").to_string();
+        if name.contains("noclickcopy") {
+            continue;
+        }
+        let Some(keys) = dev.supported_keys() else { continue };
+        let interesting = keys.contains(evdev::KeyCode::BTN_LEFT)
+            || keys.contains(evdev::KeyCode::KEY_A);
+        if !interesting {
+            continue;
+        }
+        seen += 1;
+        let tx = tx.clone();
+        std::thread::spawn(move || {
+            let _ = &path;
+            loop {
+                let Ok(events) = dev.fetch_events() else { return };
+                for ev in events {
+                    if ev.event_type() == evdev::EventType::KEY && ev.value() == 1 {
+                        let code = ev.code();
+                        let name = evdev::KeyCode::new(code);
+                        let _ = tx.send(format!("{name:?}"));
+                    }
+                }
+            }
+        });
+    }
+    if seen == 0 {
+        anyhow::bail!("no devices readable — run `noclickcopy doctor`");
+    }
+    eprintln!("noclickcopy: watching {} device(s). Press the button, then Ctrl-C.", seen);
+    for line in rx {
+        println!("{line}");
+    }
     Ok(())
 }
 

@@ -106,7 +106,8 @@ impl Router {
             Event::Click => match &mut self.state {
                 State::Armed(a) => {
                     a.caret_placed = true;
-                    Outcome::None
+                    self.state = State::Disarmed;
+                    Outcome::Fire
                 }
                 State::Disarmed => Outcome::None,
             },
@@ -201,10 +202,12 @@ mod tests {
     }
 
     #[test]
-    fn rule_2_click_then_confirm_fires() {
+    fn rule_2_click_fires_when_armed() {
         let mut r = armed(10_000);
-        assert_eq!(r.handle(Event::Click), Outcome::None);
-        assert_eq!(r.handle(Event::Confirm), Outcome::Fire);
+        // Click-to-paste: the click itself is the confirm.
+        assert_eq!(r.handle(Event::Click), Outcome::Fire);
+        // One shot: subsequent confirm is a no-op because disarmed.
+        assert_eq!(r.handle(Event::Confirm), Outcome::None);
     }
 
     #[test]
@@ -217,8 +220,7 @@ mod tests {
     #[test]
     fn rule_3_one_shot() {
         let mut r = armed(10_000);
-        r.handle(Event::Click);
-        assert_eq!(r.handle(Event::Confirm), Outcome::Fire);
+        assert_eq!(r.handle(Event::Click), Outcome::Fire);
         assert!(!r.is_armed());
         assert_eq!(r.handle(Event::Confirm), Outcome::None, "no double paste");
         assert!(r.armed_selection().is_none());
