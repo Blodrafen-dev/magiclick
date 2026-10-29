@@ -76,6 +76,7 @@ impl Router {
         }
     }
 
+    #[allow(dead_code)]
     pub fn state(&self) -> &State {
         &self.state
     }

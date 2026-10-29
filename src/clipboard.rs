@@ -14,6 +14,8 @@ pub trait Clipboard {
     fn primary(&self) -> Result<Option<String>>;
     fn set_clipboard(&self, text: &str) -> Result<()>;
     fn clipboard(&self) -> Result<Option<String>>;
+    /// Backend name, shown by `doctor`.
+    #[allow(dead_code)]
     fn name(&self) -> &'static str;
 }
 

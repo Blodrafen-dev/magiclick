@@ -3,7 +3,6 @@
 //! Prints what actually works on *this* machine instead of assuming. Every
 //! "unsupported" here is a documented limitation, not a crash.
 
-use crate::clipboard::Clipboard;
 use anyhow::Result;
 use std::process::Command;
 
@@ -17,6 +16,7 @@ pub enum Verdict {
 pub struct Report {
     pub session: String,
     pub clipboard_tools: Vec<&'static str>,
+    #[allow(dead_code)]
     pub clipboard_tool_ok: bool,
     pub primary_works: bool,
     pub injector_ok: bool,

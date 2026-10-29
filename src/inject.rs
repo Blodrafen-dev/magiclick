@@ -108,6 +108,7 @@ pub fn available() -> bool {
             .is_ok()
 }
 
+#[allow(dead_code)]
 pub fn require() -> Result<()> {
     if !std::path::Path::new("/dev/uinput").exists() {
         bail!("/dev/uinput missing — load the uinput module");
