@@ -26,6 +26,17 @@ else
     echo "    keeping existing config"
 fi
 
+echo "==> omarchy bar widget"
+if [ -d "${HOME}/.config/omarchy/plugins" ]; then
+    install -d "${HOME}/.config/omarchy/plugins/dek.noclickcopy"
+    cp "$SRC_DIR/contrib/omarchy-widget/manifest.json" "$SRC_DIR/contrib/omarchy-widget/NoClickCopy.qml" \
+        "${HOME}/.config/omarchy/plugins/dek.noclickcopy/"
+    echo "    installed to ~/.config/omarchy/plugins/dek.noclickcopy"
+    echo "    add to the bar:  omarchy bar put dek.noclickcopy right"
+else
+    echo "    skipped (no Omarchy shell found)"
+fi
+
 echo "==> verifying"
 "$BIN_DIR/noclickcopy" doctor || true
 

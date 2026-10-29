@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "dek.noclickcopy",
+  "name": "NoClickCopy",
+  "version": "0.1.0",
+  "author": "dek",
+  "license": "MIT",
+  "description": "Drag-to-copy state: off, watching, armed. Click to toggle.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "NoClickCopy.qml"
+  },
+  "barWidget": {
+    "displayName": "NoClickCopy",
+    "description": "Shows whether NoClickCopy is off, watching, or armed, and toggles it",
+    "category": "System",
+    "allowMultiple": false
+  }
+}

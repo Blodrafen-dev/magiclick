@@ -93,6 +93,15 @@ The bar widget only calls `noclickcopy`, so nothing platform-specific leaks into
 the core. Three states worth showing: **off**, **idle**, **armed**. Seeing
 "armed" is the safety feature — you can tell when the gun is loaded.
 
+The widget reads one file (`$XDG_RUNTIME_DIR/noclickcopy/state`) and runs one
+command (`noclickcopy toggle`). Left or right click toggles it.
+
+```sh
+./install.sh                                  # copies the widget when Omarchy is present
+omarchy bar put dek.noclickcopy right
+```
+
+
 ## How it works
 
 Short version: one platform-free state machine (`src/core.rs`, fully unit

@@ -3,6 +3,7 @@ mod config;
 mod core;
 mod doctor;
 mod drag;
+mod runtime;
 mod inject;
 
 use anyhow::Result;
@@ -29,6 +30,12 @@ enum Cmd {
     Doctor,
     /// One-shot capability summary, machine readable.
     Status,
+    /// Turn watching on or off (what the bar widget calls).
+    Enable,
+    /// Turn watching off.
+    Disable,
+    /// Flip it.
+    Toggle,
 }
 
 fn hash(text: &str) -> u64 {
@@ -65,10 +72,27 @@ fn main() -> Result<()> {
             doctor::print(&r);
             std::process::exit(if r.copy_on_drag { 0 } else { 1 });
         }
+        Cmd::Enable => {
+            runtime::set_control("on");
+            println!("on");
+        }
+        Cmd::Disable => {
+            runtime::set_control("off");
+            println!("off");
+        }
+        Cmd::Toggle => {
+            // Base the flip on the control file, not on observed state: the
+            // daemon may not be running, and state then never updates.
+            let was_on = runtime::control().map(|c| c != "off").unwrap_or(true);
+            let next = was_on;
+            runtime::set_control(if next { "off" } else { "on" });
+            println!("{}", if next { "off" } else { "on" });
+        }
         Cmd::Status => {
             let r = doctor::report()?;
             println!(
-                "{{\"copy_on_drag\":{},\"paste_router\":{},\"verdict\":\"{}\"}}",
+                "{{\"state\":\"{}\",\"copy_on_drag\":{},\"paste_router\":{},\"verdict\":\"{}\"}}",
+                runtime::state(),
                 r.copy_on_drag,
                 r.paste_router,
                 match r.verdict {
@@ -108,8 +132,45 @@ fn run() -> Result<()> {
 
     let mut last_clipboard_check = Instant::now();
     let mut owned_hash: Option<u64> = None;
+    let mut enabled = runtime::control().map(|c| c != "off").unwrap_or(true);
+    let mut published = String::new();
+    let mut last_control_check = Instant::now();
+
+    runtime::set_state(if enabled { "idle" } else { "off" });
+
+    // Keep the bar icon honest: publish only on change.
+    macro_rules! publish {
+        () => {{
+            let next = if !enabled {
+                "off"
+            } else if router.is_armed() {
+                "armed"
+            } else {
+                "idle"
+            };
+            if next != published {
+                published = next.to_string();
+                runtime::set_state(next);
+            }
+        }};
+    }
 
     loop {
+        if last_control_check.elapsed() > Duration::from_millis(250) {
+            last_control_check = Instant::now();
+            let now_enabled = runtime::control().map(|c| c != "off").unwrap_or(true);
+            if now_enabled != enabled {
+                enabled = now_enabled;
+                if !enabled {
+                    router.handle(core::Event::Interference("disabled"));
+                    eprintln!("noclickcopy: watching disabled");
+                } else {
+                    eprintln!("noclickcopy: watching enabled");
+                }
+                publish!();
+            }
+        }
+
         let event = match rx.recv_timeout(Duration::from_millis(100)) {
             Ok(input) => match input {
                 drag::Input::Drag => {
@@ -145,9 +206,10 @@ fn run() -> Result<()> {
                         _ => continue,
                     }
                 }
-                drag::Input::Click => Event::Click,
-                drag::Input::Confirm => Event::Confirm,
-                drag::Input::KeyCode => Event::Interference("typed"),
+                drag::Input::Click if enabled => Event::Click,
+                drag::Input::Confirm if enabled => Event::Confirm,
+                drag::Input::KeyCode if enabled => Event::Interference("typed"),
+                _ => continue,
             },
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 // While armed, watch for something else taking the clipboard.
@@ -170,6 +232,8 @@ fn run() -> Result<()> {
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         };
 
+        // Fire disarms before it reports, so hold the selection first.
+        let held = router.armed_selection().cloned();
         match router.handle(event) {
             Outcome::None => {}
             Outcome::Armed => {
@@ -183,18 +247,21 @@ fn run() -> Result<()> {
             }
             Outcome::Disarmed(reason) => eprintln!("noclickcopy: disarmed ({reason})"),
             Outcome::Fire => {
-                let text = router.armed_selection().map(|s| s.text.clone());
-                if let (Some(inj), Some(_)) = (injector.as_mut(), text.as_ref()) {
+                if let (Some(inj), Some(_sel)) = (injector.as_mut(), held.as_ref()) {
                     if let Err(e) = inj.chord(&cfg.paste_chord) {
                         eprintln!("noclickcopy: paste failed: {e}");
                     } else {
                         eprintln!("noclickcopy: pasted via {}", cfg.paste_chord);
                     }
                 } else {
-                    eprintln!("noclickcopy: confirm observed (no paste configured)");
+                    eprintln!(
+                        "noclickcopy: confirm observed ({} bytes, no paste configured)",
+                        held.as_ref().map(|s| s.len).unwrap_or(0)
+                    );
                 }
             }
         }
+        publish!();
     }
 
     Ok(())
