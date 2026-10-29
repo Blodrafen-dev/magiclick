@@ -1,4 +1,4 @@
-//! `dragcopy doctor` — install-time verification.
+//! `noclickcopy doctor` — install-time verification.
 //!
 //! Prints what actually works on *this* machine instead of assuming. Every
 //! "unsupported" here is a documented limitation, not a crash.
@@ -151,7 +151,7 @@ pub fn report() -> Result<Report> {
 
 pub fn print(r: &Report) {
     let yn = |b: bool| if b { "yes" } else { "no" };
-    println!("dragcopy doctor\n");
+    println!("noclickcopy doctor\n");
     println!("  session            {}", r.session);
     println!(
         "  clipboard tools    {}",

@@ -1,5 +1,5 @@
-# dragcopy configuration
-# Copy to ~/.config/dragcopy/config.toml and edit.
+# NoClickCopy configuration
+# Copy to ~/.config/noclickcopy/config.toml and edit.
 
 # Rule 5. How long an arm survives. Keep this short.
 arm_timeout_ms = 10000

@@ -1,11 +1,11 @@
 [Unit]
-Description=dragcopy — drag to copy, confirm to paste
+Description=NoClickCopy — drag to copy, confirm to paste
 After=graphical-session.target
 PartOf=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=%h/.local/bin/dragcopy run
+ExecStart=%h/.local/bin/noclickcopy run
 Restart=on-failure
 RestartSec=2
 

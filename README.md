@@ -1,8 +1,8 @@
-# dragcopy
+# NoClickCopy
 
 Drag over text. Click where it goes. It's already there.
 
-`dragcopy` is a small daemon for Linux that turns selecting text into a
+`NoClickCopy` is a small daemon for Linux that turns selecting text into a
 clipboard copy, then waits for you to *choose* where to paste it — and never
 guesses.
 
@@ -49,14 +49,14 @@ compositor never has to cooperate.
 | Copy-only | environments without `/dev/uinput` |
 | Planned | Windows, GNOME Wayland |
 
-`dragcopy doctor` tells you what actually works on *your* machine rather than
+`noclickcopy doctor` tells you what actually works on *your* machine rather than
 what the README claims. Run it before you trust it.
 
 ## Install
 
 ```sh
 ./install.sh          # builds, installs to ~/.local/bin, enables the user unit
-dragcopy doctor       # verify
+noclickcopy doctor       # verify
 ```
 
 Requirements: `cargo`, membership in the `input` group, `wl-clipboard` on
@@ -68,7 +68,7 @@ sudo usermod -aG input "$USER"   # log out and back in
 
 ## Configure
 
-`~/.config/dragcopy/config.toml` — see `config.example.toml`.
+`~/.config/noclickcopy/config.toml` — see `config.example.toml`.
 
 The confirm gesture is a key you choose, so it can be a thumb button, a foot
 pedal, or nothing at all. On a Logitech MX the side button is bound through
@@ -89,7 +89,7 @@ pasted and types nothing. Flip to `"paste"` when you trust it.
 
 ## Giving it a home in your bar
 
-The bar widget only calls `dragcopy`, so nothing platform-specific leaks into
+The bar widget only calls `noclickcopy`, so nothing platform-specific leaks into
 the core. Three states worth showing: **off**, **idle**, **armed**. Seeing
 "armed" is the safety feature — you can tell when the gun is loaded.
 

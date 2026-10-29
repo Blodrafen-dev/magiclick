@@ -49,7 +49,7 @@ impl Config {
             .unwrap_or_else(|_| {
                 PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".config")
             });
-        base.join("dragcopy").join("config.toml")
+        base.join("noclickcopy").join("config.toml")
     }
 
     pub fn load() -> Result<Self> {

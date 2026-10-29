@@ -15,7 +15,7 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 #[derive(Parser)]
-#[command(name = "dragcopy", version, about = "Drag to copy, confirm to paste.")]
+#[command(name = "noclickcopy", version, about = "Drag to copy, confirm to paste.")]
 struct Cli {
     #[command(subcommand)]
     command: Option<Cmd>,
@@ -90,7 +90,7 @@ fn run() -> Result<()> {
     let (tx, rx) = mpsc::channel::<drag::Input>();
     let n = drag::spawn_readers(confirm_code, cfg.drag_threshold, tx)?;
     if n == 0 {
-        anyhow::bail!("no input devices readable — run `dragcopy doctor`");
+        anyhow::bail!("no input devices readable — run `noclickcopy doctor`");
     }
 
     let clip = clipboard::default_backend();
@@ -102,7 +102,7 @@ fn run() -> Result<()> {
     };
 
     eprintln!(
-        "dragcopy: {} device(s), confirm={} ({:?}), timeout={}ms",
+        "noclickcopy: {} device(s), confirm={} ({:?}), timeout={}ms",
         n, cfg.confirm_key, cfg.confirm_action, cfg.arm_timeout_ms
     );
 
@@ -120,7 +120,7 @@ fn run() -> Result<()> {
                         Ok(Some(text)) if !text.is_empty() => {
                             if text.len() > cfg.max_bytes {
                                 eprintln!(
-                                    "dragcopy: selection too large ({} bytes), ignored",
+                                    "noclickcopy: selection too large ({} bytes), ignored",
                                     text.len()
                                 );
                                 continue;
@@ -131,7 +131,7 @@ fn run() -> Result<()> {
                             }
                             if cfg.copy_on_drag {
                                 if let Err(e) = clip.set_clipboard(&text) {
-                                    eprintln!("dragcopy: clipboard write failed: {e}");
+                                    eprintln!("noclickcopy: clipboard write failed: {e}");
                                 }
                             }
                             owned_hash = Some(h);
@@ -175,23 +175,23 @@ fn run() -> Result<()> {
             Outcome::Armed => {
                 if let Some(sel) = router.armed_selection() {
                     eprintln!(
-                        "dragcopy: armed {} bytes from {}",
+                        "noclickcopy: armed {} bytes from {}",
                         sel.len,
                         sel.source_app.as_deref().unwrap_or("?")
                     );
                 }
             }
-            Outcome::Disarmed(reason) => eprintln!("dragcopy: disarmed ({reason})"),
+            Outcome::Disarmed(reason) => eprintln!("noclickcopy: disarmed ({reason})"),
             Outcome::Fire => {
                 let text = router.armed_selection().map(|s| s.text.clone());
                 if let (Some(inj), Some(_)) = (injector.as_mut(), text.as_ref()) {
                     if let Err(e) = inj.chord(&cfg.paste_chord) {
-                        eprintln!("dragcopy: paste failed: {e}");
+                        eprintln!("noclickcopy: paste failed: {e}");
                     } else {
-                        eprintln!("dragcopy: pasted via {}", cfg.paste_chord);
+                        eprintln!("noclickcopy: pasted via {}", cfg.paste_chord);
                     }
                 } else {
-                    eprintln!("dragcopy: confirm observed (no paste configured)");
+                    eprintln!("noclickcopy: confirm observed (no paste configured)");
                 }
             }
         }

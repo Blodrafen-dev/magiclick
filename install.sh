@@ -11,25 +11,25 @@ cargo build --release --manifest-path "$SRC_DIR/Cargo.toml"
 
 echo "==> installing binary to ${BIN_DIR}"
 mkdir -p "$BIN_DIR"
-install -m 755 "$SRC_DIR/target/release/dragcopy" "$BIN_DIR/dragcopy"
+install -m 755 "$SRC_DIR/target/release/noclickcopy" "$BIN_DIR/noclickcopy"
 
 echo "==> installing systemd user unit"
 mkdir -p "$UNIT_DIR"
-install -m 644 "$SRC_DIR/contrib/dragcopy.service" "$UNIT_DIR/dragcopy.service"
+install -m 644 "$SRC_DIR/contrib/noclickcopy.service" "$UNIT_DIR/noclickcopy.service"
 
 echo "==> config"
-if [ ! -f "${HOME}/.config/dragcopy/config.toml" ]; then
-    mkdir -p "${HOME}/.config/dragcopy"
-    cp "$SRC_DIR/config.example.toml" "${HOME}/.config/dragcopy/config.toml"
-    echo "    wrote ~/.config/dragcopy/config.toml (confirm_action = observe)"
+if [ ! -f "${HOME}/.config/noclickcopy/config.toml" ]; then
+    mkdir -p "${HOME}/.config/noclickcopy"
+    cp "$SRC_DIR/config.example.toml" "${HOME}/.config/noclickcopy/config.toml"
+    echo "    wrote ~/.config/noclickcopy/config.toml (confirm_action = observe)"
 else
     echo "    keeping existing config"
 fi
 
 echo "==> verifying"
-"$BIN_DIR/dragcopy" doctor || true
+"$BIN_DIR/noclickcopy" doctor || true
 
 echo
 echo "Enable at login with:"
 echo "    systemctl --user daemon-reload"
-echo "    systemctl --user enable --now dragcopy.service"
+echo "    systemctl --user enable --now noclickcopy.service"

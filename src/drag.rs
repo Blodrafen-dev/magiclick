@@ -1,7 +1,7 @@
 //! Raw input. Reads /dev/input directly, which is why this works the same under
 //! X11 and Wayland: the compositor never has to cooperate.
 //!
-//! Requires membership in the `input` group. `dragcopy doctor` checks that.
+//! Requires membership in the `input` group. `noclickcopy doctor` checks that.
 
 use anyhow::Result;
 use evdev::{Device, EventType, KeyCode, RelativeAxisCode};
@@ -43,7 +43,7 @@ pub fn spawn_readers(confirm_code: u16, threshold: i32, tx: Sender<Input>) -> Re
     for (path, dev) in evdev::enumerate() {
         let name = dev.name().unwrap_or("").to_string();
         // Never read our own injected events back.
-        if name.contains("dragcopy") {
+        if name.contains("noclickcopy") {
             continue;
         }
 
@@ -71,7 +71,7 @@ pub fn spawn_readers(confirm_code: u16, threshold: i32, tx: Sender<Input>) -> Re
 pub fn count_devices() -> (usize, usize) {
     let (mut p, mut k) = (0, 0);
     for (_, dev) in evdev::enumerate() {
-        if dev.name().unwrap_or("").contains("dragcopy") {
+        if dev.name().unwrap_or("").contains("noclickcopy") {
             continue;
         }
         let Some(keys) = dev.supported_keys() else {
@@ -94,7 +94,7 @@ fn pointer_loop(mut dev: Device, path: std::path::PathBuf, threshold: i32, tx: S
         let events = match dev.fetch_events() {
             Ok(e) => e,
             Err(e) => {
-                eprintln!("dragcopy: {} closed: {e}", path.display());
+                eprintln!("noclickcopy: {} closed: {e}", path.display());
                 return;
             }
         };
@@ -140,7 +140,7 @@ fn keyboard_loop(mut dev: Device, path: std::path::PathBuf, confirm_code: u16, t
         let events = match dev.fetch_events() {
             Ok(e) => e,
             Err(e) => {
-                eprintln!("dragcopy: {} closed: {e}", path.display());
+                eprintln!("noclickcopy: {} closed: {e}", path.display());
                 return;
             }
         };
