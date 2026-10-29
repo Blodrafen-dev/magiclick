@@ -7,7 +7,7 @@ clipboard copy, then waits for you to *choose* where to paste it — and never
 guesses.
 
 ```
-drag ──► armed ──► click (caret placed) ──► confirm ──► pasted ──► disarmed
+drag ──► armed ──► click ──► pasted ──► disarmed (click IS confirm)
                                         └─ anything else ──► disarmed
 ```
 
@@ -25,14 +25,15 @@ prediction engine. It is a tripwire that is easy to arm and easy to disarm.
 | # | Rule |
 |---|---|
 | 1 | Arm on drag-select, and only if the selection actually changed |
-| 2 | Fire only on confirm, and only after a click has placed the caret |
+| 2 | Click IS confirm when armed. No separate confirm gesture needed. |
 | 3 | One shot, then disarm |
 | 4 | Anything else disarms (fail closed) |
 | 5 | Stale for 10s, disarm |
 
-Rule 2 is the one that makes it feel safe. Confirming without clicking is a
-no-op on purpose — the caret is still wherever it was, and that is how a paste
-lands mid-word in a document you did not intend to touch.
+Rule 2 is the one that makes it work: when armed, a single click places the
+caret and pastes immediately (one-shot). A stray click after arming still fires,
+so the 10-second timeout (Rule 5) is your safety net — it disarms before any
+random click turns accidental.
 
 Rule 5 is the one that saves you. Without it, a forgotten arm turns your next
 random click into a paste.
@@ -84,8 +85,28 @@ f13 = macro(M-v)
 mouse2 = macro(f13)
 ```
 
-`confirm_action = "observe"` is the default: it logs what *would* have been
-pasted and types nothing. Flip to `"paste"` when you trust it.
+`confirm_action = "observe"` is the safe default: it logs what *would* have
+been pasted and types nothing. Flip to `"paste"` when you trust it.
+
+## Field detection
+
+Click-to-paste is the primary mode: when armed, the click itself pastes. That
+makes it safe to fire on a click, because the click is the confirm — but it also
+means the click must land in a text field. Linux can tell you that in the
+places that matter most, through [AT-SPI](docs/field-detection.md) hit-testing:
+
+| role | verdict |
+|---|---|
+| `entry`, `text`, `document text`, `paragraph`, `editable text` | paste |
+| `button`, `push button`, `toggle button`, `link`, `menu item`, `check box`, `radio button`, `tab`, `slider`, `combo box`, `canvas`, `icon` | refuse |
+| `document web`, `section`, `static`, `panel`, anything else | unknown — fail open |
+
+Unknown is a policy decision, not a technical one. **Fail open** keeps every
+terminal and every Electron chat composer working; the cost is a click on a
+toolbar in an app with no accessibility tree pastes into nothing visible. The
+one genuinely dangerous case — a paste landing in a terminal and running a
+command — is defused separately: **strip the trailing newline from anything
+pasted, always.** A paste with no newline cannot execute anything.
 
 ## Giving it a home in your bar
 

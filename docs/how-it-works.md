@@ -43,14 +43,15 @@ So rule 1 checks two things: the pointer traveled further than
 free — the compositor already tells us — and it silently filters out every
 drag that was not about text.
 
-## Why clicking is required before confirming
+## Why clicking places the caret and then pastes
 
-Confirming without a click means the caret is wherever it was before the
-drag, which is usually in the document you just selected text from. Pasting
-there is a no-op at best and a corrupting edit at worst.
+Clicking where you want the selection is what deliberately places the caret.
+That click serves double duty: it puts the caret at the right spot, and it is
+the confirm gesture itself. So one click arms → pastes → disarms.
 
-Requiring a click first means the caret was placed deliberately, by the same
-hand that is about to confirm.
+Confirming without a click means the caret is wherever it was before the drag,
+which is usually in the document you just selected text from. Pasting there is
+a no-op at best and a corrupting edit at worst.
 
 ## Timeouts and the clipboard watchdog
 
