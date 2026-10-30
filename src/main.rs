@@ -1,4 +1,5 @@
 mod clipboard;
+mod compositor;
 mod config;
 mod core;
 mod doctor;
@@ -141,6 +142,7 @@ fn run() -> Result<()> {
     let mut last_arm: Option<Instant> = None;
     let mut primary_before: Option<u64> = None;
     let mut clip_before: Option<u64> = None;
+    let mut last_baseline = Instant::now() - Duration::from_secs(5);
 
     runtime::set_state(if enabled { "idle" } else { "off" });
 
@@ -180,12 +182,9 @@ fn run() -> Result<()> {
         let event = match rx.recv_timeout(Duration::from_millis(100)) {
             Ok(input) => match input {
                 drag::Input::Press if enabled => {
-                    // Snapshot both selections *before* the drag, so a stale
-                    // read after release can be told apart from a real one.
-                    // Some apps (Chromium-based) publish drags to the clipboard
-                    // and never touch the primary selection.
-                    primary_before = clip.primary().ok().flatten().map(|t| hash(&t));
-                    clip_before = clip.clipboard().ok().flatten().map(|t| hash(&t));
+                    // Nothing to do: the "what did we have before the drag"
+                    // baseline is kept fresh by the idle poll instead. Snapshotting
+                    // here races with events queued behind a slow poll.
                     continue;
                 }
                 drag::Input::Drag => {
@@ -279,29 +278,42 @@ fn run() -> Result<()> {
                             }
                         }
                     }
-                    Event::Click
+                    // Bar, desktop, layer surface: never a text field, and
+                    // usually the first click of "where did I want this?".
+                    if router.is_armed()
+                        && compositor::click_target() == compositor::Target::NoWindow
+                    {
+                        eprintln!("noclickcopy: clicked outside any window — cancelled");
+                        Event::Interference("click outside a window")
+                    } else {
+                        Event::Click
+                    }
                 }
                 drag::Input::Confirm if enabled => Event::Confirm,
                 drag::Input::KeyCode if enabled => Event::Interference("typed"),
                 _ => continue,
             },
             Err(mpsc::RecvTimeoutError::Timeout) => {
-                // While armed, watch for something else taking the clipboard.
-                if router.is_armed() && last_clipboard_check.elapsed() > Duration::from_millis(300)
-                {
-                    last_clipboard_check = Instant::now();
-                    if let Ok(Some(current)) = clip.clipboard() {
-                        if Some(hash(&current)) != owned_hash {
-                            Event::ClipboardMoved
-                        } else {
-                            Event::Tick(Instant::now())
+                let mut ev = Event::Tick(Instant::now());
+                if router.is_armed() {
+                    // While armed, watch for something else taking the clipboard.
+                    if last_clipboard_check.elapsed() > Duration::from_millis(300) {
+                        last_clipboard_check = Instant::now();
+                        if let Ok(Some(current)) = clip.clipboard() {
+                            if Some(hash(&current)) != owned_hash {
+                                ev = Event::ClipboardMoved;
+                            }
                         }
-                    } else {
-                        Event::Tick(Instant::now())
                     }
-                } else {
-                    Event::Tick(Instant::now())
+                } else if last_baseline.elapsed() > Duration::from_millis(1000) {
+                    // Idle: remember what the selections look like right now, so
+                    // the next drag can tell "something new" from "the same old
+                    // text" without racing a snapshot against queued events.
+                    last_baseline = Instant::now();
+                    primary_before = clip.primary().ok().flatten().map(|t| hash(&t));
+                    clip_before = clip.clipboard().ok().flatten().map(|t| hash(&t));
                 }
+                ev
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         };
@@ -320,8 +332,12 @@ fn run() -> Result<()> {
                     );
                 }
             }
-            Outcome::Disarmed(reason) => eprintln!("noclickcopy: disarmed ({reason})"),
+            Outcome::Disarmed(reason) => {
+                last_arm = None;
+                eprintln!("noclickcopy: disarmed ({reason})")
+            }
             Outcome::Fire => {
+                last_arm = None;
                 if let (Some(inj), Some(_sel)) = (injector.as_mut(), held.as_ref()) {
                     if let Err(e) = inj.chord(&cfg.paste_chord) {
                         eprintln!("noclickcopy: paste failed: {e}");

@@ -5,7 +5,7 @@
 
 use anyhow::Result;
 use evdev::{Device, EventType, KeyCode, RelativeAxisCode};
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
@@ -50,19 +50,19 @@ fn is_modifier(code: u16) -> bool {
 /// suspend destroys `/dev/input/eventN` and hands out a new number. A reader
 /// that dies must be replaced, or the daemon goes quietly deaf.
 pub fn spawn_readers(confirm_code: u16, threshold: i32, tx: Sender<Input>) -> Result<usize> {
-    let live: Arc<Mutex<HashSet<PathBuf>>> = Arc::new(Mutex::new(HashSet::new()));
+    let reg: Arc<Mutex<Registry>> = Arc::new(Mutex::new(Registry::default()));
     let stop = Arc::new(AtomicBool::new(false));
 
-    let first = scan(&live, &stop, confirm_code, threshold, &tx);
+    let first = scan(&reg, &stop, confirm_code, threshold, &tx);
 
-    let (live2, stop2, tx2) = (live.clone(), stop.clone(), tx.clone());
+    let (reg2, stop2, tx2) = (reg.clone(), stop.clone(), tx.clone());
     std::thread::spawn(move || {
         while !stop2.load(Ordering::Relaxed) {
             std::thread::sleep(Duration::from_secs(3));
             if stop2.load(Ordering::Relaxed) {
                 break;
             }
-            let n = scan(&live2, &stop2, confirm_code, threshold, &tx2);
+            let n = scan(&reg2, &stop2, confirm_code, threshold, &tx2);
             if n > 0 {
                 eprintln!("noclickcopy: re-attached {n} input device(s)");
             }
@@ -72,8 +72,22 @@ pub fn spawn_readers(confirm_code: u16, threshold: i32, tx: Sender<Input>) -> Re
     Ok(first)
 }
 
+/// Which devices we hold, and which have died in a way that re-opening the
+/// same node will not fix. Keyed by the node's inode: a device that really
+/// came back has a new one.
+#[derive(Default)]
+struct Registry {
+    live: HashMap<PathBuf, u64>,
+    dead: HashMap<PathBuf, u64>,
+}
+
+fn inode(path: &PathBuf) -> u64 {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata(path).map(|m| m.ino()).unwrap_or(0)
+}
+
 fn scan(
-    live: &Arc<Mutex<HashSet<PathBuf>>>,
+    reg: &Arc<Mutex<Registry>>,
     stop: &Arc<AtomicBool>,
     confirm_code: u16,
     threshold: i32,
@@ -82,8 +96,16 @@ fn scan(
     let mut spawned = 0;
 
     for (path, dev) in evdev::enumerate() {
-        if live.lock().map(|l| l.contains(&path)).unwrap_or(false) {
-            continue;
+        let ino = inode(&path);
+        {
+            let Ok(r) = reg.lock() else { continue };
+            if r.live.contains_key(&path) {
+                continue;
+            }
+            // Same node, still dead: re-reading it just burns CPU and log.
+            if r.dead.get(&path) == Some(&ino) {
+                continue;
+            }
         }
         let name = dev.name().unwrap_or("").to_string();
         // Never read our own injected events back.
@@ -100,12 +122,13 @@ fn scan(
             continue;
         }
 
-        if let Ok(mut l) = live.lock() {
-            l.insert(path.clone());
+        if let Ok(mut r) = reg.lock() {
+            r.live.insert(path.clone(), ino);
+            r.dead.remove(&path);
         }
         spawned += 1;
 
-        let (tx, live, stop) = (tx.clone(), live.clone(), stop.clone());
+        let (tx, reg, stop) = (tx.clone(), reg.clone(), stop.clone());
         let p = path.clone();
         std::thread::spawn(move || {
             if is_pointer {
@@ -114,9 +137,12 @@ fn scan(
                 keyboard_loop(dev, p.clone(), confirm_code, tx, stop.clone());
             }
             // Gone (unplugged, suspended, or the daemon is shutting down):
-            // free the path so a rescan can attach a replacement.
-            if let Ok(mut l) = live.lock() {
-                l.remove(&p);
+            // free the path and remember the inode so we do not thrash on a
+            // device that is merely broken.
+            if let Ok(mut r) = reg.lock() {
+                if let Some(ino) = r.live.remove(&p) {
+                    r.dead.insert(p, ino);
+                }
             }
         });
     }
@@ -210,6 +236,11 @@ fn keyboard_loop(
     tx: Sender<Input>,
     stop: Arc<AtomicBool>,
 ) {
+    // Modifiers held down mean "a shortcut", not "typing". Switching desktop
+    // with Super+4 is navigation — the whole point of browsing for a target —
+    // and must not cancel the arm.
+    let mut held_mod = false;
+
     loop {
         let events = match dev.fetch_events() {
             Ok(e) => e,
@@ -220,14 +251,31 @@ fn keyboard_loop(
         };
 
         for ev in events {
-            if ev.event_type() != EventType::KEY || ev.value() != 1 {
+            if ev.event_type() != EventType::KEY {
                 continue;
             }
             let code = ev.code();
+            let value = ev.value();
+
+            if is_modifier(code) {
+                match code {
+                    // Shift alone is still typing ("Hello"), so only the
+                    // command modifiers suppress the typing signal.
+                    29 | 97 | 56 | 100 | 125 | 126 => held_mod = value != 0,
+                    _ => {}
+                }
+                continue;
+            }
+
+            if value != 1 {
+                continue;
+            }
+            if held_mod {
+                continue;
+            }
+
             let msg = if code == confirm_code {
                 Input::Confirm
-            } else if is_modifier(code) {
-                continue;
             } else {
                 Input::KeyCode
             };
