@@ -378,10 +378,15 @@ fn run() -> Result<()> {
             Outcome::Fire => {
                 last_arm = None;
                 if let (Some(inj), Some(_sel)) = (injector.as_mut(), held.as_ref()) {
-                    if let Err(e) = inj.chord(&cfg.paste_chord) {
+                    let chord = if cfg.paste_chord.eq_ignore_ascii_case("auto") {
+                        compositor::paste_chord().to_string()
+                    } else {
+                        cfg.paste_chord.clone()
+                    };
+                    if let Err(e) = inj.chord(&chord) {
                         eprintln!("noclickcopy: paste failed: {e}");
                     } else {
-                        eprintln!("noclickcopy: pasted via {}", cfg.paste_chord);
+                        eprintln!("noclickcopy: pasted via {chord}");
                     }
                 } else {
                     eprintln!(

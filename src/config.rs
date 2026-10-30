@@ -35,7 +35,7 @@ impl Default for Config {
             drag_threshold: 40,
             confirm_key: "KEY_F13".into(),
             confirm_action: ConfirmAction::Observe,
-            paste_chord: "super+v".into(),
+            paste_chord: "auto".into(),
             copy_on_drag: true,
             max_bytes: 64 * 1024,
         }

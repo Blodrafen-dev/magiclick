@@ -137,9 +137,86 @@ pub fn wait_for_focus(budget: std::time::Duration) -> bool {
     }
 }
 
+/// Classes that behave like terminals: they take `ctrl+shift+v`, never
+/// `ctrl+v` (which inserts a literal `^V`).
+const TERMINALS: &[&str] = &[
+    "foot",
+    "alacritty",
+    "kitty",
+    "ghostty",
+    "wezterm",
+    "konsole",
+    "xterm",
+    "urxvt",
+    "st",
+    "tilix",
+    "terminator",
+    "xfce4-terminal",
+    "gnome-terminal",
+    "kgx",
+    "org.gnome.console",
+    "rio",
+    "warp",
+    "tabby",
+];
+
+/// Which chord actually pastes into the focused window.
+///
+/// `super+v` is an Omarchy binding that re-dispatches `ctrl+v`; on any other
+/// desktop it is not a paste at all, and even on Omarchy the injected SUPER can
+/// still be held when the dispatcher runs. So the daemon picks the chord the
+/// focused app understands instead of borrowing a desktop shortcut.
+pub fn paste_chord() -> &'static str {
+    let Some(info) = active_window_info() else {
+        return "ctrl+v";
+    };
+    let (class, tags) = info;
+    let class = class.to_ascii_lowercase();
+    let is_terminal = TERMINALS.iter().any(|t| class == *t)
+        || tags.iter().any(|t| t.trim_end_matches('*') == "terminal");
+    if is_terminal {
+        "ctrl+shift+v"
+    } else {
+        "ctrl+v"
+    }
+}
+
+/// Focused window's class and tags, best effort (`class`, `tags`).
+pub fn active_window_info() -> Option<(String, Vec<String>)> {
+    let out = hyprctl(&["-j", "activewindow"])?;
+    if out.trim().is_empty() || out.trim() == "{}" {
+        return None;
+    }
+    let class = json_string(&out, "class").unwrap_or_default();
+    let tags = json_string_array(&out, "tags");
+    Some((class, tags))
+}
+
+fn json_string(src: &str, key: &str) -> Option<String> {
+    let pat = format!("\"{key}\":");
+    let rest = src.split(&pat).nth(1)?.trim_start();
+    let rest = rest.strip_prefix('"')?;
+    Some(rest.split('"').next()?.to_string())
+}
+
+fn json_string_array(src: &str, key: &str) -> Vec<String> {
+    let pat = format!("\"{key}\":");
+    let Some(rest) = src.split(&pat).nth(1) else {
+        return Vec::new();
+    };
+    let Some(end) = rest.find(']') else {
+        return Vec::new();
+    };
+    rest[..end]
+        .split('"')
+        .skip(1)
+        .step_by(2)
+        .map(str::to_string)
+        .collect()
+}
+
 pub fn click_target() -> Target {
-    let (Some((x, y)), Some(wins)) = (cursor(), windows()) else {
-        return Target::Unknown;
+    let (Some((x, y)), Some(wins)) = (cursor(), windows()) else {        return Target::Unknown;
     };
     for (wx, wy, ww, wh) in wins {
         if x >= wx && x < wx + ww && y >= wy && y < wy + wh {
@@ -147,4 +224,62 @@ pub fn click_target() -> Target {
         }
     }
     Target::NoWindow
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ACTIVE: &str = r#"{
+    "address": "0x5645f5d39700",
+    "class": "chromium",
+    "tags": ["chromium-based-browser*", "default-opacity*"],
+    "title": "x"
+}"#;
+
+    const TERM: &str = r#"{
+    "address": "0x5645f72467c0",
+    "class": "foot",
+    "tags": ["default-opacity*", "terminal*"]
+}"#;
+
+    #[test]
+    fn reads_class() {
+        assert_eq!(json_string(ACTIVE, "class").as_deref(), Some("chromium"));
+    }
+
+    #[test]
+    fn reads_tags() {
+        assert_eq!(
+            json_string_array(ACTIVE, "tags"),
+            vec!["chromium-based-browser*", "default-opacity*"]
+        );
+    }
+
+    #[test]
+    fn terminal_is_detected_by_class() {
+        let class = json_string(TERM, "class").unwrap().to_ascii_lowercase();
+        assert!(TERMINALS.contains(&class.as_str()));
+    }
+
+    #[test]
+    fn terminal_is_detected_by_tag() {
+        let tags = json_string_array(TERM, "tags");
+        assert!(tags.iter().any(|t| t.trim_end_matches('*') == "terminal"));
+    }
+
+    #[test]
+    fn browser_is_not_a_terminal() {
+        let class = json_string(ACTIVE, "class").unwrap().to_ascii_lowercase();
+        let tags = json_string_array(ACTIVE, "tags");
+        let is_term = TERMINALS.contains(&class.as_str())
+            || tags.iter().any(|t| t.trim_end_matches('*') == "terminal");
+        assert!(!is_term);
+    }
+
+    #[test]
+    fn pairs_parse() {
+        assert_eq!(pair("12, 40"), Some((12, 40)));
+        assert_eq!(pair("nope"), None);
+    }
 }

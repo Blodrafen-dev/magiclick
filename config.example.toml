@@ -19,8 +19,9 @@ confirm_key = "KEY_F13"
 confirm_action = "observe"
 
 # Injected when confirm_action = "paste".
-# Ctrl+V by default; on Omarchy it is Super+V.
-paste_chord = "super+v"
+# "auto" picks ctrl+v, or ctrl+shift+v in terminals, from the focused window.
+# Set an explicit chord only to override that.
+paste_chord = "auto"
 
 # Copy drag selections to the clipboard automatically.
 copy_on_drag = true
