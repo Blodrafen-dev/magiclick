@@ -20,7 +20,7 @@ the type system.
 ## Clipboard managers
 
 If another manager owns the selection (CopyQ, GPaste, a custom `wl-paste
---watch` script) it will race. `noclickcopy doctor` warns when it spots one.
+--watch` script) it will race. `magiclick doctor` warns when it spots one.
 Running two auto-copy daemons at once is not supported and will double-trigger.
 
 ## GNOME Wayland

@@ -55,7 +55,7 @@ impl Injector {
         }
         let dev = VirtualDevice::builder()
             .context("opening /dev/uinput")?
-            .name("noclickcopy-virtual")
+            .name("magiclick-virtual")
             .with_keys(&keys)
             .context("declaring keys")?
             .build()

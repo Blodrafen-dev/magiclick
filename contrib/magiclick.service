@@ -1,11 +1,11 @@
 [Unit]
-Description=NoClickCopy — drag to copy, confirm to paste
+Description=MagiClick — drag to copy, confirm to paste
 After=graphical-session.target
 PartOf=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=%h/.local/bin/noclickcopy run
+ExecStart=%h/.local/bin/magiclick run
 Restart=on-failure
 RestartSec=2
 

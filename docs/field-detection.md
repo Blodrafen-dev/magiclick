@@ -6,7 +6,7 @@ tested on Hyprland 0.56.2 / Wayland in October 2026, so nobody has to guess
 again.
 
 The question is the whole product. Copy-on-drag already exists on most desktops
-(primary selection). The reason to install NoClickCopy is the second half: it
+(primary selection). The reason to install MagiClick is the second half: it
 should paste *where you meant*, without asking. That means answering "is the
 thing under the pointer a text field?" at the moment of the click.
 

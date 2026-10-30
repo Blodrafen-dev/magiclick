@@ -1,8 +1,8 @@
-# NoClickCopy
+# MagiClick
 
 Drag over text. Click where it goes. It's already there.
 
-`NoClickCopy` is a small daemon for Linux that turns selecting text into a
+`MagiClick` is a small daemon for Linux that turns selecting text into a
 clipboard copy, then waits for you to *choose* where to paste it — and never
 guesses.
 
@@ -50,14 +50,14 @@ compositor never has to cooperate.
 | Copy-only | environments without `/dev/uinput` |
 | Planned | Windows, GNOME Wayland |
 
-`noclickcopy doctor` tells you what actually works on *your* machine rather than
+`magiclick doctor` tells you what actually works on *your* machine rather than
 what the README claims. Run it before you trust it.
 
 ## Install
 
 ```sh
 ./install.sh          # builds, installs to ~/.local/bin, enables the user unit
-noclickcopy doctor       # verify
+magiclick doctor       # verify
 ```
 
 Requirements: `cargo`, membership in the `input` group, `wl-clipboard` on
@@ -69,7 +69,9 @@ sudo usermod -aG input "$USER"   # log out and back in
 
 ## Configure
 
-`~/.config/noclickcopy/config.toml` — see `config.example.toml`.
+`~/.config/magiclick/config.toml` — see `config.example.toml`. A pre-rename
+`~/.config/noclickcopy/config.toml` is still read while the new
+file does not exist, so a config you already tuned keeps working.
 
 The confirm gesture is a key you choose, so it can be a thumb button, a foot
 pedal, or nothing at all. On a Logitech MX the side button is bound through
@@ -110,16 +112,16 @@ pasted, always.** A paste with no newline cannot execute anything.
 
 ## Giving it a home in your bar
 
-The bar widget only calls `noclickcopy`, so nothing platform-specific leaks into
+The bar widget only calls `magiclick`, so nothing platform-specific leaks into
 the core. Three states worth showing: **off**, **idle**, **armed**. Seeing
 "armed" is the safety feature — you can tell when the gun is loaded.
 
-The widget reads one file (`$XDG_RUNTIME_DIR/noclickcopy/state`) and runs one
-command (`noclickcopy toggle`). Left or right click toggles it.
+The widget reads one file (`$XDG_RUNTIME_DIR/magiclick/state`) and runs one
+command (`magiclick toggle`). Left or right click toggles it.
 
 ```sh
 ./install.sh                                  # copies the widget when Omarchy is present
-omarchy bar put dek.noclickcopy right
+omarchy bar put dek.magiclick right
 ```
 
 

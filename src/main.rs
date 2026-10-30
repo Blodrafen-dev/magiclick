@@ -17,7 +17,7 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 #[derive(Parser)]
-#[command(name = "noclickcopy", version, about = "Drag to copy, confirm to paste.")]
+#[command(name = "magiclick", version, about = "Drag to copy, confirm to paste.")]
 struct Cli {
     #[command(subcommand)]
     command: Option<Cmd>,
@@ -118,7 +118,7 @@ fn run() -> Result<()> {
     let (tx, rx) = mpsc::channel::<drag::Input>();
     let n = drag::spawn_readers(confirm_code, cfg.drag_threshold, tx)?;
     if n == 0 {
-        anyhow::bail!("no input devices readable — run `noclickcopy doctor`");
+        anyhow::bail!("no input devices readable — run `magiclick doctor`");
     }
 
     let clip = clipboard::default_backend();
@@ -130,7 +130,7 @@ fn run() -> Result<()> {
     };
 
     eprintln!(
-        "noclickcopy: {} device(s), confirm={} ({:?}), timeout={}ms",
+        "magiclick: {} device(s), confirm={} ({:?}), timeout={}ms",
         n, cfg.confirm_key, cfg.confirm_action, cfg.arm_timeout_ms
     );
 
@@ -171,9 +171,9 @@ fn run() -> Result<()> {
                 enabled = now_enabled;
                 if !enabled {
                     router.handle(core::Event::Interference("disabled"));
-                    eprintln!("noclickcopy: watching disabled");
+                    eprintln!("magiclick: watching disabled");
                 } else {
-                    eprintln!("noclickcopy: watching enabled");
+                    eprintln!("magiclick: watching enabled");
                 }
                 publish!();
             }
@@ -236,7 +236,7 @@ fn run() -> Result<()> {
                                 clip_before = seen_c;
                             }
                             eprintln!(
-                                "noclickcopy: drag saw no new selection (window: {}, primary: {}, clipboard: {})",
+                                "magiclick: drag saw no new selection (window: {}, primary: {}, clipboard: {})",
                                 source_app().unwrap_or_else(|| "?".into()),
                                 match last_p {
                                     Some(n) => format!("{n}B unchanged"),
@@ -252,7 +252,7 @@ fn run() -> Result<()> {
                         Some((text, from)) => {
                             if text.len() > cfg.max_bytes {
                                 eprintln!(
-                                    "noclickcopy: selection too large ({} bytes), ignored",
+                                    "magiclick: selection too large ({} bytes), ignored",
                                     text.len()
                                 );
                                 continue;
@@ -263,7 +263,7 @@ fn run() -> Result<()> {
                             }
                             if cfg.copy_on_drag {
                                 if let Err(e) = clip.set_clipboard(&text) {
-                                    eprintln!("noclickcopy: clipboard write failed: {e}");
+                                    eprintln!("magiclick: clipboard write failed: {e}");
                                 }
                             }
                             owned_hash = Some(h);
@@ -280,7 +280,7 @@ fn run() -> Result<()> {
                             } else {
                                 clip_before = seen_c;
                             }
-                            eprintln!("noclickcopy: copied from {from}");
+                            eprintln!("magiclick: copied from {from}");
                             Event::DragCopied(Selection {
                                 hash: h,
                                 len: text.len(),
@@ -298,7 +298,7 @@ fn run() -> Result<()> {
                             let age = t.elapsed();
                             if age < Duration::from_secs(60) {
                                 eprintln!(
-                                    "noclickcopy: click {:.1}s after arm (arm had expired at {}s)",
+                                    "magiclick: click {:.1}s after arm (arm had expired at {}s)",
                                     age.as_secs_f64(),
                                     cfg.arm_timeout_ms as f64 / 1000.0
                                 );
@@ -313,7 +313,7 @@ fn run() -> Result<()> {
                     if router.is_armed()
                         && compositor::click_target() == compositor::Target::NoWindow
                     {
-                        eprintln!("noclickcopy: click on the bar/desktop — kept armed");
+                        eprintln!("magiclick: click on the bar/desktop — kept armed");
                         continue;
                     }
                     // The click must actually focus what was clicked before any
@@ -322,7 +322,7 @@ fn run() -> Result<()> {
                     if router.is_armed()
                         && !compositor::wait_for_focus(Duration::from_millis(400))
                     {
-                        eprintln!("noclickcopy: clicked window never took focus — kept armed, click again");
+                        eprintln!("magiclick: clicked window never took focus — kept armed, click again");
                         continue;
                     }
                     Event::Click
@@ -365,7 +365,7 @@ fn run() -> Result<()> {
                 last_arm = Some(Instant::now());
                 if let Some(sel) = router.armed_selection() {
                     eprintln!(
-                        "noclickcopy: armed {} bytes from {}",
+                        "magiclick: armed {} bytes from {}",
                         sel.len,
                         sel.source_app.as_deref().unwrap_or("?")
                     );
@@ -373,7 +373,7 @@ fn run() -> Result<()> {
             }
             Outcome::Disarmed(reason) => {
                 last_arm = None;
-                eprintln!("noclickcopy: disarmed ({reason})")
+                eprintln!("magiclick: disarmed ({reason})")
             }
             Outcome::Fire => {
                 last_arm = None;
@@ -384,13 +384,13 @@ fn run() -> Result<()> {
                         cfg.paste_chord.clone()
                     };
                     if let Err(e) = inj.chord(&chord) {
-                        eprintln!("noclickcopy: paste failed: {e}");
+                        eprintln!("magiclick: paste failed: {e}");
                     } else {
-                        eprintln!("noclickcopy: pasted via {chord}");
+                        eprintln!("magiclick: pasted via {chord}");
                     }
                 } else {
                     eprintln!(
-                        "noclickcopy: confirm observed ({} bytes, no paste configured)",
+                        "magiclick: confirm observed ({} bytes, no paste configured)",
                         held.as_ref().map(|s| s.len).unwrap_or(0)
                     );
                 }
@@ -409,7 +409,7 @@ fn watch() -> Result<()> {
     let mut seen = 0;
     for (path, mut dev) in evdev::enumerate() {
         let name = dev.name().unwrap_or("?").to_string();
-        if name.contains("noclickcopy") {
+        if name.contains("magiclick") {
             continue;
         }
         let Some(keys) = dev.supported_keys() else { continue };
@@ -435,9 +435,9 @@ fn watch() -> Result<()> {
         });
     }
     if seen == 0 {
-        anyhow::bail!("no devices readable — run `noclickcopy doctor`");
+        anyhow::bail!("no devices readable — run `magiclick doctor`");
     }
-    eprintln!("noclickcopy: watching {} device(s). Press the button, then Ctrl-C.", seen);
+    eprintln!("magiclick: watching {} device(s). Press the button, then Ctrl-C.", seen);
     for line in rx {
         println!("{line}");
     }

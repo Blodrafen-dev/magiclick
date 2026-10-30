@@ -3,7 +3,7 @@ import Quickshell
 import Quickshell.Io
 import qs.Ui
 
-// Bar front-end for the noclickcopy daemon. Holds no state of its own and makes
+// Bar front-end for the magiclick daemon. Holds no state of its own and makes
 // no decisions: it reads two files and calls one command.
 //
 //   off     nothing is being watched
@@ -13,7 +13,7 @@ import qs.Ui
 // Seeing "armed" is the safety feature. You can tell when the gun is loaded.
 BarWidget {
   id: root
-  moduleName: "dek.noclickcopy"
+  moduleName: "dek.magiclick"
 
   readonly property string state: (stateFile.text() || "off").trim()
   readonly property bool off: state === "off"
@@ -24,14 +24,14 @@ BarWidget {
 
   FileView {
     id: stateFile
-    path: Quickshell.env("XDG_RUNTIME_DIR") + "/noclickcopy/state"
+    path: Quickshell.env("XDG_RUNTIME_DIR") + "/magiclick/state"
     watchChanges: true
     onFileChanged: reload()
   }
 
   Process {
     id: toggler
-    command: ["noclickcopy", "toggle"]
+    command: ["magiclick", "toggle"]
   }
 
   BarIconButton {
@@ -42,7 +42,7 @@ BarWidget {
     text: root.off ? "\uF00D" : (root.armed ? "\uF0EA" : "\uF0C5")
     active: root.armed
     tooltipText: root.off
-      ? "NoClickCopy off — click to start watching"
+      ? "MagiClick off — click to start watching"
       : (root.armed
         ? "Armed — click a field, then confirm to paste"
         : "Watching for drags — click to turn off")

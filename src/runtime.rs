@@ -9,7 +9,7 @@ pub fn dir() -> PathBuf {
     let base = std::env::var("XDG_RUNTIME_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| std::env::temp_dir());
-    base.join("noclickcopy")
+    base.join("magiclick")
 }
 
 pub fn state_path() -> PathBuf {
@@ -36,7 +36,7 @@ pub fn state() -> String {
         .unwrap_or_else(|_| "off".into())
 }
 
-/// "on" | "off". Written by `noclickcopy toggle`, read by the daemon.
+/// "on" | "off". Written by `magiclick toggle`, read by the daemon.
 pub fn set_control(v: &str) {
     ensure_dir();
     let _ = std::fs::write(control_path(), v);

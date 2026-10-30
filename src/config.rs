@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use serde::Deserialize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Deserialize)]
 #[serde(default)]
@@ -49,7 +49,7 @@ impl Config {
             .unwrap_or_else(|_| {
                 PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".config")
             });
-        base.join("noclickcopy").join("config.toml")
+        resolve(&base)
     }
 
     pub fn load() -> Result<Self> {
@@ -60,5 +60,66 @@ impl Config {
         let raw = std::fs::read_to_string(&path)
             .with_context(|| format!("reading {}", path.display()))?;
         toml::from_str(&raw).with_context(|| format!("parsing {}", path.display()))
+    }
+}
+
+/// New location first, then the pre-rename one.
+///
+/// A config you tuned is worth more than a tidy path: renaming the binary must
+/// not quietly reset `confirm_action` back to `observe`, or drop the key your
+/// thumb button is bound to. The new path wins once it exists, so a deliberate
+/// `config.toml` under `magiclick/` retires the old one.
+fn resolve(base: &Path) -> PathBuf {
+    let current = base.join("magiclick").join("config.toml");
+    if current.exists() {
+        return current;
+    }
+    let legacy = base.join("noclickcopy").join("config.toml");
+    if legacy.exists() {
+        return legacy;
+    }
+    current
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn write(path: &Path) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, "").unwrap();
+    }
+
+    /// Isolated base dir; these never touch the real `~/.config`.
+    fn scratch(tag: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("magiclick-config-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn falls_back_to_the_pre_rename_path() {
+        let base = scratch("legacy");
+        write(&base.join("noclickcopy").join("config.toml"));
+        assert_eq!(resolve(&base), base.join("noclickcopy").join("config.toml"));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn the_new_path_wins_when_both_exist() {
+        let base = scratch("both");
+        write(&base.join("noclickcopy").join("config.toml"));
+        write(&base.join("magiclick").join("config.toml"));
+        assert_eq!(resolve(&base), base.join("magiclick").join("config.toml"));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn neither_path_reports_the_new_one() {
+        let base = scratch("none");
+        assert_eq!(resolve(&base), base.join("magiclick").join("config.toml"));
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

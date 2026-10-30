@@ -1,7 +1,7 @@
 //! Raw input. Reads /dev/input directly, which is why this works the same under
 //! X11 and Wayland: the compositor never has to cooperate.
 //!
-//! Requires membership in the `input` group. `noclickcopy doctor` checks that.
+//! Requires membership in the `input` group. `magiclick doctor` checks that.
 
 use anyhow::Result;
 use evdev::{Device, EventType, KeyCode, RelativeAxisCode};
@@ -66,7 +66,7 @@ pub fn spawn_readers(confirm_code: u16, threshold: i32, tx: Sender<Input>) -> Re
             }
             let n = scan(&reg2, &stop2, confirm_code, threshold, &tx2);
             if n > 0 {
-                eprintln!("noclickcopy: re-attached {n} input device(s)");
+                eprintln!("magiclick: re-attached {n} input device(s)");
             }
         }
     });
@@ -111,7 +111,7 @@ fn scan(
         }
         let name = dev.name().unwrap_or("").to_string();
         // Never read our own injected events back.
-        if name.contains("noclickcopy") {
+        if name.contains("magiclick") {
             continue;
         }
 
@@ -156,7 +156,7 @@ fn scan(
 pub fn count_devices() -> (usize, usize) {
     let (mut p, mut k) = (0, 0);
     for (_, dev) in evdev::enumerate() {
-        if dev.name().unwrap_or("").contains("noclickcopy") {
+        if dev.name().unwrap_or("").contains("magiclick") {
             continue;
         }
         let Some(keys) = dev.supported_keys() else {
@@ -185,7 +185,7 @@ fn pointer_loop(
         let events = match dev.fetch_events() {
             Ok(e) => e,
             Err(e) => {
-                eprintln!("noclickcopy: {} closed: {e}", path.display());
+                eprintln!("magiclick: {} closed: {e}", path.display());
                 return;
             }
         };
@@ -257,7 +257,7 @@ fn keyboard_loop(
         let events = match dev.fetch_events() {
             Ok(e) => e,
             Err(e) => {
-                eprintln!("noclickcopy: {} closed: {e}", path.display());
+                eprintln!("magiclick: {} closed: {e}", path.display());
                 return;
             }
         };

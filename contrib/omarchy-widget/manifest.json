@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "id": "dek.noclickcopy",
-  "name": "NoClickCopy",
+  "id": "dek.magiclick",
+  "name": "MagiClick",
   "version": "0.1.0",
   "author": "dek",
   "license": "MIT",
@@ -10,11 +10,11 @@
     "bar-widget"
   ],
   "entryPoints": {
-    "barWidget": "NoClickCopy.qml"
+    "barWidget": "MagiClick.qml"
   },
   "barWidget": {
-    "displayName": "NoClickCopy",
-    "description": "Shows whether NoClickCopy is off, watching, or armed, and toggles it",
+    "displayName": "MagiClick",
+    "description": "Shows whether MagiClick is off, watching, or armed, and toggles it",
     "category": "System",
     "allowMultiple": false
   }

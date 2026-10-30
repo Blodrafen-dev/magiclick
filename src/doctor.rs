@@ -1,4 +1,4 @@
-//! `noclickcopy doctor` — install-time verification.
+//! `magiclick doctor` — install-time verification.
 //!
 //! Prints what actually works on *this* machine instead of assuming. Every
 //! "unsupported" here is a documented limitation, not a crash.
@@ -150,10 +150,10 @@ pub fn report() -> Result<Report> {
             rivals.join(", ")
         ));
     }
-    let instances = proc_count("noclickcopy run");
+    let instances = proc_count("magiclick run");
     if instances > 1 {
         notes.push(format!(
-            "{instances} noclickcopy daemons are running — pastes will fire twice; stop all but one"
+            "{instances} magiclick daemons are running — pastes will fire twice; stop all but one"
         ));
     }
     let copy_on_drag = tool_ok && input_group && pointer_devices > 0;
@@ -185,7 +185,7 @@ pub fn report() -> Result<Report> {
 
 pub fn print(r: &Report) {
     let yn = |b: bool| if b { "yes" } else { "no" };
-    println!("noclickcopy doctor\n");
+    println!("magiclick doctor\n");
     println!("  session            {}", r.session);
     println!(
         "  clipboard tools    {}",
