@@ -5,7 +5,12 @@
 
 use anyhow::Result;
 use evdev::{Device, EventType, KeyCode, RelativeAxisCode};
+use std::collections::HashSet;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 /// Anything the rest of the program cares about coming out of the kernel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,10 +44,47 @@ fn is_modifier(code: u16) -> bool {
     )
 }
 
+/// Attach a reader for every device we can use, and keep doing it.
+///
+/// Devices are not permanent: unplugging a mouse, docking, or resuming from
+/// suspend destroys `/dev/input/eventN` and hands out a new number. A reader
+/// that dies must be replaced, or the daemon goes quietly deaf.
 pub fn spawn_readers(confirm_code: u16, threshold: i32, tx: Sender<Input>) -> Result<usize> {
+    let live: Arc<Mutex<HashSet<PathBuf>>> = Arc::new(Mutex::new(HashSet::new()));
+    let stop = Arc::new(AtomicBool::new(false));
+
+    let first = scan(&live, &stop, confirm_code, threshold, &tx);
+
+    let (live2, stop2, tx2) = (live.clone(), stop.clone(), tx.clone());
+    std::thread::spawn(move || {
+        while !stop2.load(Ordering::Relaxed) {
+            std::thread::sleep(Duration::from_secs(3));
+            if stop2.load(Ordering::Relaxed) {
+                break;
+            }
+            let n = scan(&live2, &stop2, confirm_code, threshold, &tx2);
+            if n > 0 {
+                eprintln!("noclickcopy: re-attached {n} input device(s)");
+            }
+        }
+    });
+
+    Ok(first)
+}
+
+fn scan(
+    live: &Arc<Mutex<HashSet<PathBuf>>>,
+    stop: &Arc<AtomicBool>,
+    confirm_code: u16,
+    threshold: i32,
+    tx: &Sender<Input>,
+) -> usize {
     let mut spawned = 0;
 
     for (path, dev) in evdev::enumerate() {
+        if live.lock().map(|l| l.contains(&path)).unwrap_or(false) {
+            continue;
+        }
         let name = dev.name().unwrap_or("").to_string();
         // Never read our own injected events back.
         if name.contains("noclickcopy") {
@@ -54,19 +96,32 @@ pub fn spawn_readers(confirm_code: u16, threshold: i32, tx: Sender<Input>) -> Re
         };
         let is_pointer = keys.contains(KeyCode::BTN_LEFT);
         let is_keyboard = keys.contains(KeyCode::KEY_A);
-
-        if is_pointer {
-            let (tx, path) = (tx.clone(), path.clone());
-            std::thread::spawn(move || pointer_loop(dev, path, threshold, tx));
-            spawned += 1;
-        } else if is_keyboard {
-            let (tx, path) = (tx.clone(), path.clone());
-            std::thread::spawn(move || keyboard_loop(dev, path, confirm_code, tx));
-            spawned += 1;
+        if !is_pointer && !is_keyboard {
+            continue;
         }
+
+        if let Ok(mut l) = live.lock() {
+            l.insert(path.clone());
+        }
+        spawned += 1;
+
+        let (tx, live, stop) = (tx.clone(), live.clone(), stop.clone());
+        let p = path.clone();
+        std::thread::spawn(move || {
+            if is_pointer {
+                pointer_loop(dev, p.clone(), threshold, tx, stop.clone());
+            } else {
+                keyboard_loop(dev, p.clone(), confirm_code, tx, stop.clone());
+            }
+            // Gone (unplugged, suspended, or the daemon is shutting down):
+            // free the path so a rescan can attach a replacement.
+            if let Ok(mut l) = live.lock() {
+                l.remove(&p);
+            }
+        });
     }
 
-    Ok(spawned)
+    spawned
 }
 
 /// (pointers, keyboards) that we would be able to read. Used by doctor.
@@ -88,7 +143,13 @@ pub fn count_devices() -> (usize, usize) {
     (p, k)
 }
 
-fn pointer_loop(mut dev: Device, path: std::path::PathBuf, threshold: i32, tx: Sender<Input>) {
+fn pointer_loop(
+    mut dev: Device,
+    path: PathBuf,
+    threshold: i32,
+    tx: Sender<Input>,
+    stop: Arc<AtomicBool>,
+) {
     let mut pressed = false;
     let mut travel = 0i32;
 
@@ -110,6 +171,7 @@ fn pointer_loop(mut dev: Device, path: std::path::PathBuf, threshold: i32, tx: S
                                 pressed = true;
                                 travel = 0;
                                 if tx.send(Input::Press).is_err() {
+                                    stop.store(true, Ordering::Relaxed);
                                     return;
                                 }
                             }
@@ -121,6 +183,7 @@ fn pointer_loop(mut dev: Device, path: std::path::PathBuf, threshold: i32, tx: S
                                     Input::Click
                                 };
                                 if tx.send(msg).is_err() {
+                                    stop.store(true, Ordering::Relaxed);
                                     return;
                                 }
                             }
@@ -140,7 +203,13 @@ fn pointer_loop(mut dev: Device, path: std::path::PathBuf, threshold: i32, tx: S
     }
 }
 
-fn keyboard_loop(mut dev: Device, path: std::path::PathBuf, confirm_code: u16, tx: Sender<Input>) {
+fn keyboard_loop(
+    mut dev: Device,
+    path: PathBuf,
+    confirm_code: u16,
+    tx: Sender<Input>,
+    stop: Arc<AtomicBool>,
+) {
     loop {
         let events = match dev.fetch_events() {
             Ok(e) => e,
@@ -163,6 +232,7 @@ fn keyboard_loop(mut dev: Device, path: std::path::PathBuf, confirm_code: u16, t
                 Input::KeyCode
             };
             if tx.send(msg).is_err() {
+                stop.store(true, Ordering::Relaxed);
                 return;
             }
         }

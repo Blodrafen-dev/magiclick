@@ -29,8 +29,19 @@ pub struct Report {
     pub notes: Vec<String>,
 }
 
-fn which(bin: &str) -> bool {
-    Command::new("sh")
+/// How many processes match a `pgrep -f` pattern. Used to spot rivals.
+fn proc_count(pattern: &str) -> usize {
+    Command::new("pgrep")
+        .arg("-f")
+        .arg("-c")
+        .arg(pattern)
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse().ok())
+        .unwrap_or(0)
+}
+
+fn which(bin: &str) -> bool {    Command::new("sh")
         .arg("-c")
         .arg(format!("command -v {bin} >/dev/null 2>&1"))
         .status()
@@ -111,17 +122,31 @@ pub fn report() -> Result<Report> {
     if pointer_devices == 0 {
         notes.push(String::from("no pointing device found"));
     }
-    if let Ok(list) = Command::new("sh")
-        .arg("-c")
-        .arg("pgrep -a -f 'cliphist|copyq|GPaste|wl-paste --watch' | head -5")
-        .output()
-    {
-        let s = String::from_utf8_lossy(&list.stdout);
-        if s.trim().lines().count() > 1 {
-            notes.push(String::from("multiple clipboard managers detected — selection ownership may race"));
+    // Competing selection watchers. Two things writing the clipboard from the
+    // selection is how auto-copy tools double-fire and paste each other's text.
+    let mut rivals: Vec<&str> = Vec::new();
+    for (pattern, label) in [
+        ("cliphist", "cliphist"),
+        ("copyq", "CopyQ"),
+        ("gpaste-client", "GPaste"),
+        ("wl-paste --primary --watch", "a primary->clipboard sync"),
+    ] {
+        if proc_count(pattern) > 0 {
+            rivals.push(label);
         }
     }
-
+    if !rivals.is_empty() {
+        notes.push(format!(
+            "another selection watcher is running ({}) — two auto-copy paths can race or double-copy",
+            rivals.join(", ")
+        ));
+    }
+    let instances = proc_count("noclickcopy run");
+    if instances > 1 {
+        notes.push(format!(
+            "{instances} noclickcopy daemons are running — pastes will fire twice; stop all but one"
+        ));
+    }
     let copy_on_drag = tool_ok && input_group && pointer_devices > 0;
     let paste_router = copy_on_drag && injector_ok;
 
