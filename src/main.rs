@@ -316,9 +316,19 @@ fn run() -> Result<()> {
                         eprintln!("noclickcopy: click on the bar/desktop — kept armed");
                         continue;
                     }
+                    // The click must actually focus what was clicked before any
+                    // key goes out, or the chord lands in the window that was
+                    // focused a moment ago (browser click, terminal paste).
+                    if router.is_armed()
+                        && !compositor::wait_for_focus(Duration::from_millis(400))
+                    {
+                        eprintln!("noclickcopy: clicked window never took focus — kept armed, click again");
+                        continue;
+                    }
                     Event::Click
                 }
                 drag::Input::Confirm if enabled => Event::Confirm,
+                drag::Input::Cancel if enabled => Event::Interference("right-clicked"),
                 drag::Input::KeyCode if enabled => Event::Interference("typed"),
                 _ => continue,
             },

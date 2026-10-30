@@ -23,6 +23,8 @@ pub enum Input {
     Click,
     /// The configured confirm key.
     Confirm,
+    /// Right button: "never mind". The cheapest way to throw an arm away.
+    Cancel,
     /// Some other key, i.e. the user is doing something else now.
     KeyCode,
 }
@@ -191,6 +193,16 @@ fn pointer_loop(
         for ev in events {
             match ev.event_type() {
                 EventType::KEY => {
+                    // Right button is the universal "no": it cancels an armed
+                    // selection without touching anything else. Cheaper and more
+                    // obvious than waiting for the timeout.
+                    if ev.code() == KeyCode::BTN_RIGHT.code() {
+                        if ev.value() == 1 && tx.send(Input::Cancel).is_err() {
+                            stop.store(true, Ordering::Relaxed);
+                            return;
+                        }
+                        continue;
+                    }
                     if ev.code() == KeyCode::BTN_LEFT.code() {
                         match ev.value() {
                             1 => {

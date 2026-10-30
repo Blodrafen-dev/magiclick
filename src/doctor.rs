@@ -122,6 +122,15 @@ pub fn report() -> Result<Report> {
     if pointer_devices == 0 {
         notes.push(String::from("no pointing device found"));
     }
+    // Compositor adapter: without one, the daemon cannot tell "clicked a text
+    // field" from "clicked the bar", and cannot wait for the click to focus a
+    // window before typing into it. Both are silent mis-pastes, so say so.
+    match crate::compositor::click_target() {
+        crate::compositor::Target::Unknown => notes.push(String::from(
+            "no compositor adapter (Hyprland only today) — a click on the bar will paste, and a paste can land in the previously focused window",
+        )),
+        _ => {}
+    }
     // Competing selection watchers. Two things writing the clipboard from the
     // selection is how auto-copy tools double-fire and paste each other's text.
     let mut rivals: Vec<&str> = Vec::new();

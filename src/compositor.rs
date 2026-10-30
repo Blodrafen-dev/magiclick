@@ -69,6 +69,74 @@ fn windows() -> Option<Vec<(i32, i32, i32, i32)>> {
     Some(out)
 }
 
+/// Address of the mapped toplevel under the pointer, normalised (no `0x`).
+pub fn window_under_cursor() -> Option<String> {
+    let (x, y) = cursor()?;
+    let text = hyprctl(&["clients"])?;
+    let mut addr: Option<String> = None;
+    let mut at: Option<(i32, i32)> = None;
+    let mut size: Option<(i32, i32)> = None;
+    let mut best: Option<String> = None;
+
+    for line in text.lines() {
+        let t = line.trim();
+        if let Some(rest) = t.strip_prefix("Window ") {
+            addr = rest.split("->").next().map(|a| a.trim().to_string());
+            at = None;
+            size = None;
+        } else if let Some(v) = t.strip_prefix("at:") {
+            at = pair(v);
+        } else if let Some(v) = t.strip_prefix("size:") {
+            size = pair(v);
+        } else if let Some(v) = t.strip_prefix("mapped:") {
+            let mapped = v.trim() == "1";
+            if let (Some(a), Some(at), Some(s)) = (addr.as_ref(), at, size) {
+                if mapped && x >= at.0 && x < at.0 + s.0 && y >= at.1 && y < at.1 + s.1 {
+                    best = Some(a.clone());
+                }
+            }
+        }
+    }
+    best
+}
+
+/// Address of the focused toplevel, normalised (no `0x`).
+pub fn active_window() -> Option<String> {
+    let out = hyprctl(&["-j", "activewindow"])?;
+    let key = "\"address\":";
+    let rest = out.split(key).nth(1)?;
+    let raw = rest.trim_start().strip_prefix('"')?;
+    let addr = raw.split('"').next()?;
+    Some(addr.trim_start_matches("0x").to_string())
+}
+
+/// Block until the window under the pointer is the focused one.
+///
+/// A click focuses a window *and* places the caret; keyboard injection that
+/// leaves the daemon before the compositor has applied the focus lands in the
+/// window that was focused a millisecond ago — which is how a paste meant for
+/// the browser ends up in the terminal beside it. Returns `false` if the
+/// compositor never agreed, so the caller can decide what to do.
+pub fn wait_for_focus(budget: std::time::Duration) -> bool {
+    let started = std::time::Instant::now();
+    let Some(target) = window_under_cursor() else {
+        // Not over a window (or no Hyprland): nothing to compare against.
+        return true;
+    };
+    loop {
+        if active_window().as_deref() == Some(target.as_str()) {
+            // Focus is ours; give the client a moment to actually route keys
+            // to the widget that was clicked (Chromium needs a few ms).
+            std::thread::sleep(std::time::Duration::from_millis(60));
+            return true;
+        }
+        if started.elapsed() > budget {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
 pub fn click_target() -> Target {
     let (Some((x, y)), Some(wins)) = (cursor(), windows()) else {
         return Target::Unknown;
