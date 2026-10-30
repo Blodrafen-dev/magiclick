@@ -10,6 +10,8 @@ use std::sync::mpsc::Sender;
 /// Anything the rest of the program cares about coming out of the kernel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Input {
+    /// Left button pressed. The drag has not been classified yet.
+    Press,
     /// Left button released after meaningful travel.
     Drag,
     /// Left button released without travel.
@@ -107,6 +109,9 @@ fn pointer_loop(mut dev: Device, path: std::path::PathBuf, threshold: i32, tx: S
                             1 => {
                                 pressed = true;
                                 travel = 0;
+                                if tx.send(Input::Press).is_err() {
+                                    return;
+                                }
                             }
                             0 if pressed => {
                                 pressed = false;

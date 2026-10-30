@@ -138,6 +138,9 @@ fn run() -> Result<()> {
     let mut enabled = runtime::control().map(|c| c != "off").unwrap_or(true);
     let mut published = String::new();
     let mut last_control_check = Instant::now();
+    let mut last_arm: Option<Instant> = None;
+    let mut primary_before: Option<u64> = None;
+    let mut clip_before: Option<u64> = None;
 
     runtime::set_state(if enabled { "idle" } else { "off" });
 
@@ -176,12 +179,64 @@ fn run() -> Result<()> {
 
         let event = match rx.recv_timeout(Duration::from_millis(100)) {
             Ok(input) => match input {
+                drag::Input::Press if enabled => {
+                    // Snapshot both selections *before* the drag, so a stale
+                    // read after release can be told apart from a real one.
+                    // Some apps (Chromium-based) publish drags to the clipboard
+                    // and never touch the primary selection.
+                    primary_before = clip.primary().ok().flatten().map(|t| hash(&t));
+                    clip_before = clip.clipboard().ok().flatten().map(|t| hash(&t));
+                    continue;
+                }
                 drag::Input::Drag => {
-                    // The compositor publishes the new selection slightly after
-                    // the button comes up. Give it a beat.
-                    std::thread::sleep(Duration::from_millis(70));
-                    match clip.primary() {
-                        Ok(Some(text)) if !text.is_empty() => {
+                    // The new selection is published some time after the button
+                    // comes up, and *which* selection it lands in depends on the
+                    // app. Poll both until one of them actually changes, instead
+                    // of guessing at a fixed delay or a single source.
+                    let deadline = Instant::now() + Duration::from_millis(800);
+                    let mut picked: Option<(String, &'static str)> = None;
+                    let mut last_p: Option<usize> = None;
+                    let mut last_c: Option<usize> = None;
+                    while Instant::now() < deadline {
+                        std::thread::sleep(Duration::from_millis(60));
+                        let p = clip.primary().ok().flatten();
+                        if let Some(t) = &p {
+                            last_p = Some(t.len());
+                        }
+                        if let Some(t) = &p {
+                            if !t.is_empty() && Some(hash(t)) != primary_before {
+                                picked = Some((t.clone(), "primary"));
+                                break;
+                            }
+                        }
+                        let c = clip.clipboard().ok().flatten();
+                        if let Some(t) = &c {
+                            last_c = Some(t.len());
+                        }
+                        if let Some(t) = &c {
+                            if !t.is_empty() && Some(hash(t)) != clip_before {
+                                picked = Some((t.clone(), "clipboard"));
+                                break;
+                            }
+                        }
+                    }
+                    match picked {
+                        None => {
+                            eprintln!(
+                                "noclickcopy: drag saw no new selection (window: {}, primary: {}, clipboard: {})",
+                                source_app().unwrap_or_else(|| "?".into()),
+                                match last_p {
+                                    Some(n) => format!("{n}B unchanged"),
+                                    None => "empty".into(),
+                                },
+                                match last_c {
+                                    Some(n) => format!("{n}B unchanged"),
+                                    None => "empty".into(),
+                                }
+                            );
+                            continue;
+                        }
+                        Some((text, from)) => {
                             if text.len() > cfg.max_bytes {
                                 eprintln!(
                                     "noclickcopy: selection too large ({} bytes), ignored",
@@ -199,6 +254,7 @@ fn run() -> Result<()> {
                                 }
                             }
                             owned_hash = Some(h);
+                            eprintln!("noclickcopy: copied from {from}");
                             Event::DragCopied(Selection {
                                 hash: h,
                                 len: text.len(),
@@ -206,10 +262,25 @@ fn run() -> Result<()> {
                                 text,
                             })
                         }
-                        _ => continue,
                     }
                 }
-                drag::Input::Click if enabled => Event::Click,
+                drag::Input::Click if enabled => {
+                    // Diagnosis: a click that lands after the arm expired looks
+                    // identical to "nothing happened" from the outside. Say so.
+                    if !router.is_armed() {
+                        if let Some(t) = last_arm {
+                            let age = t.elapsed();
+                            if age < Duration::from_secs(60) {
+                                eprintln!(
+                                    "noclickcopy: click {:.1}s after arm (arm had expired at {}s)",
+                                    age.as_secs_f64(),
+                                    cfg.arm_timeout_ms as f64 / 1000.0
+                                );
+                            }
+                        }
+                    }
+                    Event::Click
+                }
                 drag::Input::Confirm if enabled => Event::Confirm,
                 drag::Input::KeyCode if enabled => Event::Interference("typed"),
                 _ => continue,
@@ -240,6 +311,7 @@ fn run() -> Result<()> {
         match router.handle(event) {
             Outcome::None => {}
             Outcome::Armed => {
+                last_arm = Some(Instant::now());
                 if let Some(sel) = router.armed_selection() {
                     eprintln!(
                         "noclickcopy: armed {} bytes from {}",
