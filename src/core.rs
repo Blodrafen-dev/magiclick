@@ -1,7 +1,7 @@
 //! The whole product, platform-free and unit-testable.
 //!
 //! Five rules, in order of authority:
-//!   1. arm on drag-select (only if the selection actually changed)
+//!   1. arm on drag-select (a repeat of the pending arm does not extend it)
 //!   2. fire only on an explicit confirm *after* a click has placed the caret
 //!   3. one shot, then disarm
 //!   4. anything else disarms (fail closed)
@@ -89,9 +89,14 @@ impl Router {
         match event {
             // Rule 1. Re-arming on a new drag is correct: the newest copy wins.
             Event::DragCopied(sel) => {
-                if self.last_hash == Some(sel.hash) {
-                    // Same text dragged again: no new information, leave the
-                    // existing arm alone rather than extending its life.
+                // Same text with an arm still pending: no new information, so
+                // leave that arm alone rather than restarting its clock. With
+                // nothing pending it is a fresh intent — you copied this,
+                // pasted it, and came back for more — and has to arm again.
+                // Browsers keep the previous primary selection alive across
+                // clicks, so re-selecting the same phrase reports identical
+                // text; refusing it made the tool look dead.
+                if self.last_hash == Some(sel.hash) && self.is_armed() {
                     return Outcome::None;
                 }
                 self.last_hash = Some(sel.hash);
@@ -155,6 +160,12 @@ impl Router {
         }
     }
 
+    /// Change rule 5's window without disturbing an arm already in flight.
+    /// Applies at the next tick, so shortening it can disarm immediately.
+    pub fn set_timeout(&mut self, timeout: Duration) {
+        self.timeout = timeout;
+    }
+
     /// The text to paste, if we are armed. `None` after firing.
     pub fn armed_selection(&self) -> Option<&Selection> {
         match &self.state {
@@ -162,6 +173,14 @@ impl Router {
             State::Disarmed => None,
         }
     }
+}
+
+/// A selection ending in a newline means "this line", not "and a blank line
+/// after it". `wl-paste -n` and `wl-copy -n` both leave the bytes alone, so
+/// the strip has to happen here, once, before anything is hashed or stored.
+pub fn trim_selection(text: &str) -> &str {
+    let t = text.strip_suffix('\n').unwrap_or(text);
+    t.strip_suffix('\r').unwrap_or(t)
 }
 
 #[cfg(test)]
@@ -199,6 +218,27 @@ mod tests {
     fn rule_1_new_text_rearms() {
         let mut r = armed(10_000);
         assert_eq!(r.handle(Event::DragCopied(sel(2))), Outcome::Armed);
+    }
+
+    #[test]
+    fn rule_1_same_text_arms_again_once_nothing_is_pending() {
+        let mut r = armed(10_000);
+        assert_eq!(r.handle(Event::Click), Outcome::Fire);
+        // Chromium keeps primary alive, so copying the same phrase twice in a
+        // row arrives as the same hash. That is a new intent, not a repeat.
+        assert_eq!(r.handle(Event::DragCopied(sel(1))), Outcome::Armed);
+    }
+
+    #[test]
+    fn rule_1_same_text_arms_again_after_it_expired() {
+        let mut r = armed(1_000);
+        let start = match r.state() {
+            State::Armed(a) => a.since,
+            _ => unreachable!(),
+        };
+        r.handle(Event::Tick(start + Duration::from_millis(1_000)));
+        assert!(!r.is_armed());
+        assert_eq!(r.handle(Event::DragCopied(sel(1))), Outcome::Armed);
     }
 
     #[test]
@@ -267,6 +307,46 @@ mod tests {
             Outcome::Disarmed("timed out")
         );
         assert!(!r.is_armed());
+    }
+
+    #[test]
+    fn longer_timeout_keeps_an_arm_that_would_have_expired() {
+        let mut r = armed(1_000);
+        let start = match r.state() {
+            State::Armed(a) => a.since,
+            _ => unreachable!(),
+        };
+        r.set_timeout(Duration::from_millis(4_000));
+        assert_eq!(
+            r.handle(Event::Tick(start + Duration::from_millis(3_999))),
+            Outcome::None
+        );
+        assert!(r.is_armed());
+    }
+
+    #[test]
+    fn shorter_timeout_applies_to_an_arm_already_in_flight() {
+        let mut r = armed(10_000);
+        let start = match r.state() {
+            State::Armed(a) => a.since,
+            _ => unreachable!(),
+        };
+        r.set_timeout(Duration::from_millis(2_000));
+        assert_eq!(
+            r.handle(Event::Tick(start + Duration::from_millis(2_000))),
+            Outcome::Disarmed("timed out")
+        );
+    }
+
+    #[test]
+    fn a_line_selection_loses_one_trailing_line_ending() {
+        assert_eq!(trim_selection("echo test\n"), "echo test");
+        assert_eq!(trim_selection("echo test\r\n"), "echo test");
+        assert_eq!(trim_selection("one\ntwo\n"), "one\ntwo");
+        assert_eq!(trim_selection("\n"), "");
+        // Interior newlines and ordinary whitespace are content, not terminator.
+        assert_eq!(trim_selection("one\ntwo"), "one\ntwo");
+        assert_eq!(trim_selection(" padded "), " padded ");
     }
 
     #[test]

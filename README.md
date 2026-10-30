@@ -24,16 +24,20 @@ prediction engine. It is a tripwire that is easy to arm and easy to disarm.
 
 | # | Rule |
 |---|---|
-| 1 | Arm on drag-select, and only if the selection actually changed |
+| 1 | Arm on drag-select. Re-dragging the pending text does not extend the arm. |
 | 2 | Click IS confirm when armed. No separate confirm gesture needed. |
 | 3 | One shot, then disarm |
 | 4 | Anything else disarms (fail closed) |
-| 5 | Stale for 10s, disarm |
+| 5 | Stale for `arm_timeout_ms` (30s by default), disarm |
 
 Rule 2 is the one that makes it work: when armed, a single click places the
 caret and pastes immediately (one-shot). A stray click after arming still fires,
-so the 10-second timeout (Rule 5) is your safety net — it disarms before any
-random click turns accidental.
+so the timeout (Rule 5) is your safety net — it disarms before any random click
+turns accidental. Right-click the bar glyph for a menu of 1x, 2x, 3x and 4x of
+the configured value (30s, 60s, 90s, 120s by default), each labelled with the
+seconds it buys. It is session-scoped, so a restart goes back to what your
+config says. The same thing from a terminal is `magiclick arm-timeout 2`, or
+`magiclick arm-timeout` with no value to step to the next multiple.
 
 Rule 5 is the one that saves you. Without it, a forgotten arm turns your next
 random click into a paste.
@@ -107,8 +111,9 @@ Unknown is a policy decision, not a technical one. **Fail open** keeps every
 terminal and every Electron chat composer working; the cost is a click on a
 toolbar in an app with no accessibility tree pastes into nothing visible. The
 one genuinely dangerous case — a paste landing in a terminal and running a
-command — is defused separately: **strip the trailing newline from anything
-pasted, always.** A paste with no newline cannot execute anything.
+command — is defused separately: **the trailing newline is stripped from every
+selection, always** (`core::trim_selection`, one line ending, `\n` or `\r\n`).
+A paste with no newline cannot execute anything.
 
 ## Giving it a home in your bar
 
@@ -116,14 +121,42 @@ The bar widget only calls `magiclick`, so nothing platform-specific leaks into
 the core. Three states worth showing: **off**, **idle**, **armed**. Seeing
 "armed" is the safety feature — you can tell when the gun is loaded.
 
-The widget reads one file (`$XDG_RUNTIME_DIR/magiclick/state`) and runs one
-command (`magiclick toggle`). Left or right click toggles it.
+The widget reads the files in `$XDG_RUNTIME_DIR/magiclick/` (`state`,
+`timeout`, `arm_scale`, `arm_base`, `recent`) and runs a handful of commands.
+Left click starts watching; while it is already watching, a click opens the
+menu instead, where the arm window and a **Stop watching** row live. One click
+to raise the safety net, two to take it down — a stray click on the bar must not
+disarm the thing whose job is to tell you it is armed. Right click opens the
+same menu, with the window in force ticked, which is also what the tooltip
+reports.
 
 ```sh
 ./install.sh                                  # copies the widget when Omarchy is present
 omarchy bar put dek.magiclick right
 ```
 
+
+## When nothing happened
+
+```sh
+magiclick log           # the last 15 decisions
+magiclick log -n 40
+```
+
+Every decision is one line, written where it happens:
+
+```
+ just now  a drag in chromium did not change the selection (12 bytes already selected, 12 bytes on the clipboard) — nothing copied
+   4s ago  armed 12 bytes from chromium — click where it goes
+  41s ago  a click landed 41.2s after the arming, past the 30s window — nothing pasted
+```
+
+That is the whole point: a miss is usually one of four things — the drag selected
+nothing, the arm expired, something interrupted it, or the click was refused — and
+the log names which. It goes to the journal under the same wording, so
+`journalctl --user -u magiclick` and `magiclick log` never disagree. The file is
+in `$XDG_RUNTIME_DIR/magiclick/recent` and clears at logout: it is a debugging
+aid, not a history you have to curate.
 
 ## How it works
 

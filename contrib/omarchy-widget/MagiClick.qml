@@ -1,23 +1,67 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import qs.Commons
 import qs.Ui
 
 // Bar front-end for the magiclick daemon. Holds no state of its own and makes
-// no decisions: it reads two files and calls one command.
+// no decisions: it reads four files and calls two commands.
 //
 //   off     nothing is being watched
 //   idle    watching for drags
-//   armed   a drag just happened; a confirm would paste
+//   armed   a drag just happened; a click would paste
 //
 // Seeing "armed" is the safety feature. You can tell when the gun is loaded.
-BarWidget {
+//
+// Left click toggles watching. Right click opens a menu that sets how long an
+// armed selection waits, in whole multiples of the configured `arm_timeout_ms`,
+// for the flow where you select a thing, go looking for where it goes, and only
+// then come back to it.
+Panel {
   id: root
   moduleName: "dek.magiclick"
+  // The shell routes summon/hide/toggle to bar widgets itself, so no second
+  // handler: `omarchy shell shell summon dek.magiclick` opens the menu.
+  manageIpc: false
 
   readonly property string state: (stateFile.text() || "off").trim()
+  readonly property string window: (timeoutFile.text() || "").trim()
   readonly property bool off: state === "off"
   readonly property bool armed: state === "armed"
+  readonly property string armNote: root.window.length > 0 ? " · arm " + root.window : ""
+
+  // Published by the daemon: the scale in force, and the config value it is a
+  // multiple of. Defaults match the daemon so the menu is still sensible when
+  // nothing is running.
+  readonly property int scale: Math.max(1, Math.min(4, parseInt((scaleFile.text() || "1").trim(), 10) || 1))
+  readonly property int baseMs: Math.max(1000, parseInt((baseFile.text() || "").trim(), 10) || 30000)
+
+  readonly property color ink: root.bar ? root.bar.foreground : Color.foreground
+  readonly property color dim: Qt.darker(root.ink, 1.55)
+  readonly property string family: root.bar ? root.bar.fontFamily : Style.font.family
+
+  // Long enough to be useful, short enough to read. Every row states what it
+  // costs in seconds, because "4x" alone tells you nothing about the risk.
+  readonly property var options: [
+    { scale: 1, note: "The default. Grab a thing, click where it goes." },
+    { scale: 2, note: "Switch window or desktop and still make it." },
+    { scale: 3, note: "A detour: open a tab, find the spot, come back." },
+    { scale: 4, note: "The longest it holds. Reloads on logout." }
+  ]
+
+  function seconds(n) { return Math.round(root.baseMs * n / 1000) + "s" }
+  function label(n) { return n + "× · " + root.seconds(n) }
+
+  function choose(n) {
+    root.close()
+    setter.command = ["magiclick", "arm-timeout", String(n)]
+    setter.running = true
+  }
+
+  function stopWatching() {
+    root.close()
+    stopper.running = true
+  }
 
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
@@ -29,9 +73,42 @@ BarWidget {
     onFileChanged: reload()
   }
 
+  // Written by the daemon, so the tooltip reports the window actually in force
+  // rather than what the config file says it should be.
+  FileView {
+    id: timeoutFile
+    path: Quickshell.env("XDG_RUNTIME_DIR") + "/magiclick/timeout"
+    watchChanges: true
+    onFileChanged: reload()
+  }
+
+  FileView {
+    id: scaleFile
+    path: Quickshell.env("XDG_RUNTIME_DIR") + "/magiclick/arm_scale"
+    watchChanges: true
+    onFileChanged: reload()
+  }
+
+  FileView {
+    id: baseFile
+    path: Quickshell.env("XDG_RUNTIME_DIR") + "/magiclick/arm_base"
+    watchChanges: true
+    onFileChanged: reload()
+  }
+
   Process {
     id: toggler
-    command: ["magiclick", "toggle"]
+    command: ["magiclick", "enable"]
+  }
+
+  Process {
+    id: stopper
+    command: ["magiclick", "disable"]
+  }
+
+  Process {
+    id: setter
+    command: ["magiclick", "arm-timeout"]
   }
 
   BarIconButton {
@@ -44,10 +121,144 @@ BarWidget {
     tooltipText: root.off
       ? "MagiClick off — click to start watching"
       : (root.armed
-        ? "Armed — click a field, then confirm to paste"
-        : "Watching for drags — click to turn off")
+        ? "Armed" + root.armNote + " — click a field to paste"
+        : "Watching for drags" + root.armNote + " — click for arm window")
     onPressed: function(b) {
-      if (b === Qt.LeftButton || b === Qt.RightButton) toggler.running = true
+      // Starting is one click. Stopping is a second, deliberate click inside
+      // the menu: a stray click on the bar should not silently disarm the thing
+      // whose whole job is to tell you it is armed.
+      if (b === Qt.LeftButton) {
+        if (root.off) {
+          root.close()
+          toggler.running = true
+        } else {
+          root.toggle()
+        }
+      } else if (b === Qt.RightButton) {
+        root.toggle()
+      }
+    }
+  }
+
+  KeyboardPanel {
+    id: panel
+    anchorItem: button
+    owner: root
+    bar: root.bar
+    open: root.opened
+    focusTarget: keyCatcher
+    contentWidth: panel.fittedContentWidth(Style.space(300))
+    contentHeight: panel.fittedContentHeight(content.implicitHeight, Style.space(520))
+
+    PanelKeyCatcher {
+      id: keyCatcher
+      anchors.fill: parent
+      onCloseRequested: root.close()
+
+      Column {
+        id: content
+        width: parent.width
+        spacing: Style.space(4)
+
+        Text {
+          width: parent.width
+          textFormat: Text.PlainText
+          text: "Arm window"
+          color: root.ink
+          font.family: root.family
+          font.pixelSize: Style.font.title
+          font.bold: true
+        }
+
+        Text {
+          width: parent.width
+          textFormat: Text.PlainText
+          wrapMode: Text.Wrap
+          text: "How long a drag-copied selection waits for you to click where it goes."
+          color: root.dim
+          font.family: root.family
+          font.pixelSize: Style.font.body
+          bottomPadding: Style.space(6)
+        }
+
+        Repeater {
+          model: root.options
+
+          delegate: Column {
+            required property var modelData
+            width: content.width
+            spacing: 0
+
+            Button {
+              width: parent.width
+              leftAlign: true
+              bordered: false
+              selected: root.scale === modelData.scale
+              text: root.label(modelData.scale)
+              foreground: root.ink
+              fontFamily: root.family
+              onClicked: root.choose(modelData.scale)
+            }
+
+            Text {
+              width: parent.width
+              leftPadding: Style.spacing.controlPaddingX
+              rightPadding: Style.spacing.controlPaddingX
+              bottomPadding: Style.space(4)
+              textFormat: Text.PlainText
+              wrapMode: Text.Wrap
+              text: modelData.note
+              color: root.dim
+              font.family: root.family
+              font.pixelSize: Style.font.bodySmall
+            }
+          }
+        }
+
+        PanelSeparator {
+          width: parent.width
+          foreground: root.ink
+        }
+
+        Text {
+          width: parent.width
+          textFormat: Text.PlainText
+          wrapMode: Text.Wrap
+          text: "Session only: your config stays the floor and this resets at logout."
+          color: root.dim
+          font.family: root.family
+          font.pixelSize: Style.font.bodySmall
+          topPadding: Style.space(2)
+          bottomPadding: Style.space(6)
+        }
+
+        PanelSeparator {
+          width: parent.width
+          foreground: root.ink
+        }
+
+        Button {
+          width: content.width
+          leftAlign: true
+          bordered: false
+          text: "Stop watching"
+          foreground: root.ink
+          fontFamily: root.family
+          onClicked: root.stopWatching()
+        }
+
+        Text {
+          width: parent.width
+          leftPadding: Style.spacing.controlPaddingX
+          rightPadding: Style.spacing.controlPaddingX
+          textFormat: Text.PlainText
+          wrapMode: Text.Wrap
+          text: "Left click turns watching back on."
+          color: root.dim
+          font.family: root.family
+          font.pixelSize: Style.font.bodySmall
+        }
+      }
     }
   }
 }
