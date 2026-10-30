@@ -31,7 +31,7 @@ pub enum ConfirmAction {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            arm_timeout_ms: 10_000,
+            arm_timeout_ms: 30_000,
             drag_threshold: 40,
             confirm_key: "KEY_F13".into(),
             confirm_action: ConfirmAction::Observe,

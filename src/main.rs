@@ -196,11 +196,14 @@ fn run() -> Result<()> {
                     let mut picked: Option<(String, &'static str)> = None;
                     let mut last_p: Option<usize> = None;
                     let mut last_c: Option<usize> = None;
+                    let mut seen_p: Option<u64> = None;
+                    let mut seen_c: Option<u64> = None;
                     while Instant::now() < deadline {
                         std::thread::sleep(Duration::from_millis(60));
                         let p = clip.primary().ok().flatten();
                         if let Some(t) = &p {
                             last_p = Some(t.len());
+                            seen_p = Some(hash(t));
                         }
                         if let Some(t) = &p {
                             if !t.is_empty() && Some(hash(t)) != primary_before {
@@ -211,6 +214,7 @@ fn run() -> Result<()> {
                         let c = clip.clipboard().ok().flatten();
                         if let Some(t) = &c {
                             last_c = Some(t.len());
+                            seen_c = Some(hash(t));
                         }
                         if let Some(t) = &c {
                             if !t.is_empty() && Some(hash(t)) != clip_before {
@@ -221,6 +225,16 @@ fn run() -> Result<()> {
                     }
                     match picked {
                         None => {
+                            // Nothing new: rebase anyway. While armed the live
+                            // selection *is* the armed text, and a frozen
+                            // baseline made every later drag look "unchanged",
+                            // so the arm could never be replaced — only fired.
+                            if seen_p.is_some() {
+                                primary_before = seen_p;
+                            }
+                            if seen_c.is_some() {
+                                clip_before = seen_c;
+                            }
                             eprintln!(
                                 "noclickcopy: drag saw no new selection (window: {}, primary: {}, clipboard: {})",
                                 source_app().unwrap_or_else(|| "?".into()),
@@ -253,6 +267,19 @@ fn run() -> Result<()> {
                                 }
                             }
                             owned_hash = Some(h);
+                            // Rebase the baselines to the live state: our own
+                            // clipboard write must never look like a new drag,
+                            // and the source we took the text from now holds it.
+                            if from == "primary" {
+                                primary_before = Some(h);
+                            } else {
+                                primary_before = seen_p;
+                            }
+                            if from == "clipboard" || cfg.copy_on_drag {
+                                clip_before = Some(h);
+                            } else {
+                                clip_before = seen_c;
+                            }
                             eprintln!("noclickcopy: copied from {from}");
                             Event::DragCopied(Selection {
                                 hash: h,
@@ -278,16 +305,18 @@ fn run() -> Result<()> {
                             }
                         }
                     }
-                    // Bar, desktop, layer surface: never a text field, and
-                    // usually the first click of "where did I want this?".
+                    // Bar, desktop, layer surface: never a text field, and always
+                    // a navigation gesture — "which desktop / which window".
+                    // Stay armed and say nothing: pasting here is what erased a
+                    // prompt, and disarming here would kill the very flow the
+                    // user is performing (select -> switch desktop -> click).
                     if router.is_armed()
                         && compositor::click_target() == compositor::Target::NoWindow
                     {
-                        eprintln!("noclickcopy: clicked outside any window — cancelled");
-                        Event::Interference("click outside a window")
-                    } else {
-                        Event::Click
+                        eprintln!("noclickcopy: click on the bar/desktop — kept armed");
+                        continue;
                     }
+                    Event::Click
                 }
                 drag::Input::Confirm if enabled => Event::Confirm,
                 drag::Input::KeyCode if enabled => Event::Interference("typed"),

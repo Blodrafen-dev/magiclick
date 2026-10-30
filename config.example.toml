@@ -1,8 +1,10 @@
 # NoClickCopy configuration
 # Copy to ~/.config/noclickcopy/config.toml and edit.
 
-# Rule 5. How long an arm survives. Keep this short.
-arm_timeout_ms = 10000
+# Rule 5. How long an arm survives. Long enough to browse with it: select the
+# text, switch desktop or window, find the field, click. A paste only ever
+# fires inside a real window, so a longer arm is not a longer risk.
+arm_timeout_ms = 30000
 
 # Device units of pointer travel before a button press counts as a drag
 # rather than a click. Raise it if short selections never arm.
