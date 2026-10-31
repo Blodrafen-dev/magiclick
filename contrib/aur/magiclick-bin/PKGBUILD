@@ -1,0 +1,65 @@
+# Maintainer: Dek <jbkneece@yahoo.com>
+#
+# Prebuilt release binary. `magiclick` (build from source) is the alternative if
+# you would rather not trust a binary this package did not compile.
+pkgname=magiclick-bin
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Auto-copy a text selection and paste it where you click — a confirm-gated clipboard router for Linux"
+arch=('x86_64')
+url="https://github.com/Blodrafen-dev/magiclick"
+license=('MIT')
+depends=('glibc' 'gcc-libs')
+optdepends=(
+  'wl-clipboard: clipboard backend on Wayland'
+  'xclip: clipboard backend on X11'
+  'hyprland: click targeting and paste-chord detection (the only compositor adapter today)'
+)
+provides=('magiclick')
+conflicts=('magiclick')
+options=('!strip' '!debug')
+
+source_x86_64=("${url}/releases/download/v${pkgver}/magiclick-${pkgver}-x86_64-unknown-linux-gnu.tar.gz")
+sha256sums_x86_64=('SKIP')
+
+package() {
+  cd "${srcdir}/magiclick-${pkgver}-x86_64-unknown-linux-gnu"
+
+  install -Dm755 magiclick "${pkgdir}/usr/bin/magiclick"
+  install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+  install -Dm644 config.example.toml "${pkgdir}/usr/share/doc/${pkgname}/config.example.toml"
+
+  # The unit shipped in the repo points at ~/.local/bin for the installer; a
+  # package owns /usr/bin, so rewrite the path rather than keep a second copy.
+  install -Dm644 magiclick.service "${pkgdir}/usr/lib/systemd/user/magiclick.service"
+  sed -i 's|%h/.local/bin/magiclick|/usr/bin/magiclick|' \
+    "${pkgdir}/usr/lib/systemd/user/magiclick.service"
+
+  install -Dm644 70-magiclick-uinput.rules \
+    "${pkgdir}/usr/lib/udev/rules.d/70-magiclick-uinput.rules"
+}
+
+post_install() {
+  cat <<'EOF'
+MagiClick needs two permissions before it can do anything:
+
+  1. Reading /dev/input/event* requires the `input` group:
+         sudo usermod -aG input "$USER"      # then log out and back in
+
+  2. Writing /dev/uinput (the paste router) is granted by the udev rule this
+     package installed, but the rule only applies to newly created devices:
+         sudo udevadm control --reload-rules && sudo udevadm trigger
+
+Then, as your normal user:
+
+     install -Dm644 /usr/share/doc/magiclick/config.example.toml ~/.config/magiclick/config.toml
+     magiclick doctor            # what works on this machine
+     systemctl --user daemon-reload
+     systemctl --user enable --now magiclick.service
+
+The default config is confirm_action = "observe": it logs the paste it would
+have made and types nothing. Switch to "paste" once you trust it.
+
+Bar widget (Omarchy):  omarchy plugin add https://github.com/Blodrafen-dev/omarchy-magiclick.git --enable
+EOF
+}

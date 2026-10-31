@@ -1,0 +1,10 @@
+# MagiClick injects the paste chord through /dev/uinput, which is root-only by
+# default. TAG+="uaccess" grants the user holding the active seat access to it
+# without adding anyone to a group and without granting it to other logged-in
+# users.
+#
+# Reading /dev/input/event* is a separate matter: those nodes are root:input, so
+# the user must be in the `input` group. That is deliberate -- a package should
+# not silently grant keylogging-grade access -- and `magiclick doctor` says so
+# when it is missing.
+KERNEL=="uinput", SUBSYSTEM=="misc", TAG+="uaccess", OPTIONS+="static_node=uinput"

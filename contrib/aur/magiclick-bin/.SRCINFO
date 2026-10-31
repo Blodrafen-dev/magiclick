@@ -1,0 +1,20 @@
+pkgbase = magiclick-bin
+	pkgdesc = Auto-copy a text selection and paste it where you click — a confirm-gated clipboard router for Linux
+	pkgver = 0.1.0
+	pkgrel = 1
+	url = https://github.com/Blodrafen-dev/magiclick
+	arch = x86_64
+	license = MIT
+	depends = glibc
+	depends = gcc-libs
+	optdepends = wl-clipboard: clipboard backend on Wayland
+	optdepends = xclip: clipboard backend on X11
+	optdepends = hyprland: click targeting and paste-chord detection (the only compositor adapter today)
+	provides = magiclick
+	conflicts = magiclick
+	options = !strip
+	options = !debug
+	source_x86_64 = https://github.com/Blodrafen-dev/magiclick/releases/download/v0.1.0/magiclick-0.1.0-x86_64-unknown-linux-gnu.tar.gz
+	sha256sums_x86_64 = SKIP
+
+pkgname = magiclick-bin

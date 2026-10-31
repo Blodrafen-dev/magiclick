@@ -1,0 +1,42 @@
+name: release
+
+# Builds the tarball the AUR `magiclick-bin` package downloads. Built on
+# ubuntu-latest rather than Arch on purpose: an older glibc produces a binary
+# that runs on a newer one, never the other way round.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  tarball:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - run: cargo build --release --locked
+
+      - name: Stage the release tarball
+        run: |
+          set -eu
+          pkgver="${GITHUB_REF_NAME#v}"
+          dir="magiclick-${pkgver}-x86_64-unknown-linux-gnu"
+          mkdir -p "$dir"
+          install -m 755 target/release/magiclick "$dir/"
+          install -m 644 LICENSE config.example.toml \
+            contrib/magiclick.service \
+            contrib/70-magiclick-uinput.rules "$dir/"
+          tar --owner=0 --group=0 --numeric-owner -czf "$dir.tar.gz" "$dir"
+          sha256sum "$dir.tar.gz" > SHA256SUMS
+          cat SHA256SUMS
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            magiclick-*-x86_64-unknown-linux-gnu.tar.gz
+            SHA256SUMS
+          generate_release_notes: true
