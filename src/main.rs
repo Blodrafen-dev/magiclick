@@ -61,14 +61,21 @@ enum Cmd {
     },
 }
 
-/// Where `magiclick support` points.
+/// Where `magiclick support` points. One source of truth: the bar widget's
+/// Support row and the README both lead here, so moving the tip jar is a
+/// one-line change rather than a hunt.
 ///
 /// One constant and no network code on purpose. This daemon reads every key and
 /// pointer event on the machine and injects keystrokes into whatever window is
 /// focused; outbound HTTP in that process would be a permanent line in its
 /// threat model for a tip jar. So it prints the URL, and the only request ever
 /// made is the one your own browser makes, when you ask for it with `--open`.
-const SUPPORT_URL: &str = "https://www.buymeacoffee.com/<handle>";
+///
+/// GitHub Sponsors is the destination because the code is already there: no
+/// second account, and the Sponsor button on the repository page lands on the
+/// same place. It 404s until Sponsors approval comes through, which costs
+/// nothing — the URL is correct now and starts working on its own.
+const SUPPORT_URL: &str = "https://github.com/sponsors/Blodrafen-dev";
 
 /// "3m ago" reads faster than a wall clock when you are asking why a thing you
 /// just did did not happen.
@@ -129,6 +136,22 @@ fn arm_window(base_ms: u64, scale: u8) -> String {
 /// still there.
 fn is_new_selection(seen: u64, baseline: Option<u64>, owned: Option<u64>, settled: bool) -> bool {
     Some(seen) != baseline || (settled && owned == Some(seen))
+}
+
+/// Whether the clipboard still needs our write.
+///
+/// `owned_hash` is bookkeeping, not evidence. Between two selections of the same
+/// text something else can take the clipboard — the chat client you copied from,
+/// a clipboard manager restoring an entry — and trusting the hash then leaves
+/// that foreign value in place while the arm claims to own it. The safety guard
+/// reads the clipboard, sees a stranger, and disarms: the "armed, then instantly
+/// disarmed" bug. So confirm against the live clipboard, and only after the hash
+/// already matches, so an ordinary first selection still costs no transfer.
+fn must_write(owned: Option<u64>, h: u64, clip: &dyn Clipboard) -> bool {
+    if owned != Some(h) {
+        return true;
+    }
+    !matches!(clip.clipboard(), Ok(Some(ref c)) if hash(c) == h)
 }
 
 /// Did the gesture that just ended leave a selection behind?
@@ -566,10 +589,11 @@ fn run() -> Result<()> {
                             let h = hash(&text);
                             // Re-selecting text we already carry is a real
                             // drag — the router decides whether it is news (it
-                            // is, once nothing is armed). Only the redundant
-                            // clipboard write is skipped: we already own it.
-                            let already_ours = owned_hash == Some(h);
-                            if cfg.copy_on_drag && !already_ours {
+                            // is, once nothing is armed). The clipboard write is
+                            // skipped only if the clipboard still holds it: the
+                            // hash alone goes stale, and skipping then leaves a
+                            // foreign value under an arm that claims to own it.
+                            if cfg.copy_on_drag && must_write(owned_hash, h, clip.as_ref()) {
                                 if let Err(e) = clip.set_clipboard(&text) {
                                     say!("clipboard write failed: {e}");
                                 }
@@ -990,6 +1014,36 @@ mod tests {
             *self.clipboard.borrow_mut() = Some(text.to_string());
             Ok(())
         }
+    }
+
+    #[test]
+    fn a_re_selection_is_written_again_when_something_else_took_the_clipboard() {
+        // The reported bug: the same text selected twice, with a foreign
+        // clipboard in between. Skipping the write left that stranger in place
+        // while the arm claimed it, and the guard disarmed on its own wake-up.
+        let h = hash("Cancel");
+        let clip = Fake::new(Some("Cancel"), Some("the chat client's 167 bytes"));
+        assert!(must_write(Some(h), h, &clip));
+    }
+
+    #[test]
+    fn a_re_selection_is_not_rewritten_while_the_clipboard_still_holds_it() {
+        let h = hash("Cancel");
+        let clip = Fake::new(Some("Cancel"), Some("Cancel"));
+        assert!(!must_write(Some(h), h, &clip));
+        assert!(clip.written.borrow().is_empty());
+    }
+
+    #[test]
+    fn a_first_selection_is_always_written() {
+        let h = hash("Cancel");
+        assert!(must_write(
+            None,
+            h,
+            &Fake::new(Some("Cancel"), Some("Cancel"))
+        ));
+        // An empty clipboard is not a match either.
+        assert!(must_write(Some(h), h, &Fake::new(Some("Cancel"), None)));
     }
 
     #[test]
