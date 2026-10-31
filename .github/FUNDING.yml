@@ -1,0 +1,12 @@
+# The Sponsor button on the repository page.
+#
+# Every line here is commented out until the account exists, because GitHub
+# honours this file the moment it is pushed: a placeholder handle renders a
+# button that leads nowhere, which is worse than no button at all.
+#
+# `buy_me_a_coffee` takes the handle only, not the URL.
+# buy_me_a_coffee: your-handle
+#
+# Enrol at github.com/sponsors first — the button only appears once GitHub has
+# your payout and tax details, whatever this file says.
+# github: your-github-username

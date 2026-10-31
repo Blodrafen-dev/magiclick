@@ -123,10 +123,10 @@ the core. Three states worth showing: **off**, **idle**, **armed**. Seeing
 
 The widget reads the files in `$XDG_RUNTIME_DIR/magiclick/` (`state`,
 `timeout`, `arm_scale`, `arm_base`, `recent`) and runs a handful of commands.
-Left click starts watching; while it is already watching, a click opens the
-menu instead, where the arm window and a **Stop watching** row live. One click
-to raise the safety net, two to take it down — a stray click on the bar must not
-disarm the thing whose job is to tell you it is armed. Right click opens the
+Left click turns auto-copy on; while it is already on, a click opens the menu
+instead, where the arm window and a **Disable** row live. One click to raise the
+safety net, two to take it down — a stray click on the bar must not disarm the
+thing whose job is to tell you it is armed. Right click opens the
 same menu, with the window in force ticked, which is also what the tooltip
 reports.
 
@@ -168,6 +168,30 @@ interesting is in the state machine; everything fragile is in an adapter.
 See `docs/how-it-works.md` for the event flow, and `docs/limitations.md` for
 the parts that are deliberately unfinished.
 
+## Support
+
+MagiClick is free, MIT, and asks for nothing. If you want to say thanks, there
+are two ways and both are quiet:
+
+```sh
+magiclick support          # prints the link
+magiclick support --open   # opens it in your browser
+```
+
+`support` makes no request of its own — it prints a URL, and reaching the site
+is your browser's job. That is deliberate: this daemon reads every key you press
+and types into your focused window, so it does not open sockets for anything it
+was not asked to do.
+
+<!-- Fill in the handle in both places when the tip jar goes live: here and
+     SUPPORT_URL in src/main.rs. Until then `magiclick support` refuses to run,
+     because /magiclick may already belong to someone else.
+
+[buymeacoffee.com/HANDLE](https://www.buymeacoffee.com/HANDLE)
+
+Or use the **Sponsor** button on the repository page.
+-->
+
 ## Roadmap
 
 - [x] auto-copy, native evdev
@@ -184,4 +208,4 @@ MIT.
 
 ---
 
-If this saves you a daily Alt-Tab, the tip jar is at `<link>`.
+If this saves you a daily Alt-Tab, `magiclick support` shows where to say thanks.

@@ -51,7 +51,22 @@ enum Cmd {
         #[arg(short = 'n', long, default_value_t = 15)]
         n: usize,
     },
+    /// Print the project's support link. Opens a browser only with --open.
+    Support {
+        /// Open the link in your browser.
+        #[arg(long)]
+        open: bool,
+    },
 }
+
+/// Where `magiclick support` points.
+///
+/// One constant and no network code on purpose. This daemon reads every key and
+/// pointer event on the machine and injects keystrokes into whatever window is
+/// focused; outbound HTTP in that process would be a permanent line in its
+/// threat model for a tip jar. So it prints the URL, and the only request ever
+/// made is the one your own browser makes, when you ask for it with `--open`.
+const SUPPORT_URL: &str = "https://www.buymeacoffee.com/<handle>";
 
 /// "3m ago" reads faster than a wall clock when you are asking why a thing you
 /// just did did not happen.
@@ -134,6 +149,26 @@ fn source_app() -> Option<String> {
     None
 }
 
+fn support(open: bool) -> Result<()> {
+    // A placeholder is better than a guessed handle: `/magiclick` may well
+    // belong to someone else, and a tip jar that quietly pays a stranger is
+    // worse than one that is not wired up yet.
+    if SUPPORT_URL.contains('<') {
+        anyhow::bail!("support link not configured yet — set SUPPORT_URL in src/main.rs");
+    }
+    println!("{SUPPORT_URL}");
+    if open {
+        std::process::Command::new("xdg-open")
+            .arg(SUPPORT_URL)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()?;
+    } else {
+        eprintln!("pass --open to open it in your browser");
+    }
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command.unwrap_or(Cmd::Run) {
@@ -167,6 +202,7 @@ fn main() -> Result<()> {
         }
         Cmd::Watch => watch()?,
         Cmd::Log { n } => print_log(n),
+        Cmd::Support { open } => support(open)?,
         Cmd::Toggle => {
             // Base the flip on the control file, not on observed state: the
             // daemon may not be running, and state then never updates.
