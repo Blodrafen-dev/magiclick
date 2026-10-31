@@ -17,6 +17,10 @@ pub struct Config {
     pub paste_chord: String,
     /// Copy drag selections to the clipboard automatically.
     pub copy_on_drag: bool,
+    /// Arm from a click that caused a copy: copy glyphs, "Copy link address".
+    pub arm_on_copy: ArmOnCopy,
+    /// How long after a click a copy still counts as caused by that click.
+    pub copy_click_window_ms: u64,
     /// Refuse to carry selections larger than this. Guards pastejacking-ish mistakes.
     pub max_bytes: usize,
 }
@@ -28,6 +32,17 @@ pub enum ConfirmAction {
     Paste,
 }
 
+/// Whether an arm can come from something other than a drag.
+///
+/// "click" is the copy-glyph case: a click that changes the clipboard we did not
+/// write is a copy someone asked for, so it arms the same way a drag does.
+#[derive(Debug, Deserialize, PartialEq, Eq, Clone, Copy)]
+#[serde(rename_all = "lowercase")]
+pub enum ArmOnCopy {
+    Off,
+    Click,
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -37,6 +52,8 @@ impl Default for Config {
             confirm_action: ConfirmAction::Observe,
             paste_chord: "auto".into(),
             copy_on_drag: true,
+            arm_on_copy: ArmOnCopy::Click,
+            copy_click_window_ms: 600,
             max_bytes: 64 * 1024,
         }
     }

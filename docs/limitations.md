@@ -3,9 +3,7 @@
 Written down before anyone asks, because a paste tool that oversells itself is
 a paste tool that corrupts a document.
 
-## "Is this a text field?" — not reliably knowable on Linux
-
-The obvious safety check is to verify the click landed in an editable field
+## "Is this a text field?" — not reliably knowable on LinuxThe obvious safety check is to verify the click landed in an editable field
 before pasting. On Linux there is no dependable way to do that:
 
 - accessibility APIs (AT-SPI) cover GTK/Qt and miss terminals, Electron, and
@@ -16,6 +14,17 @@ before pasting. On Linux there is no dependable way to do that:
 
 So the confirm gesture is doing the work that field detection cannot. You are
 the type system.
+
+## Copies you did not cause
+
+Arming from a click is a correlation, not an intent check. A page that calls
+`navigator.clipboard.writeText()` on *any* click, or a clipboard manager writing
+on a timer, can look exactly like a copy glyph. Two things keep that honest: the
+bar shows `armed` the moment it happens, and the arm carries only what was
+actually copied — it never invents content. Checking the accessibility role of
+the thing you clicked (AT-SPI: "is this node a button labelled Copy") would be
+more precise, and is app-by-app enough that it is not worth it until the cheap
+version proves noisy in practice.
 
 ## Clipboard managers
 

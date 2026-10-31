@@ -26,6 +26,21 @@ paste_chord = "auto"
 # Copy selections to the clipboard automatically.
 copy_on_drag = true
 
+# Arm from a copy you clicked, not just a drag you made.
+#
+# A click with no drag that is followed by a clipboard change we did not make is
+# a copy you asked for: a copy glyph on a web page, "Copy link address" in a
+# context menu, a copy button in any app. Those never touch the selection, so
+# without this they arm nothing.
+#
+# "click" enables it. "off" goes back to arming on drags only.
+arm_on_copy = "click"
+
+# How long after a click a copy still counts as caused by that click. Longer
+# catches a slow context-menu choice; shorter is stricter about clicks that
+# happened to be followed by some unrelated copy.
+copy_click_window_ms = 600
+
 # Refuse to carry anything larger than this. A 4MB blob is almost never
 # something you meant to paste into an editable field.
 max_bytes = 65536

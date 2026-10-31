@@ -24,11 +24,26 @@ prediction engine. It is a tripwire that is easy to arm and easy to disarm.
 
 | # | Rule |
 |---|---|
-| 1 | Arm on selection. Re-selecting the pending text does not extend the arm. |
+| 1 | Arm on selection — a drag, **or a click that copied** (copy glyphs, "Copy link address"). Re-selecting the pending text does not extend the arm. |
 | 2 | Click IS confirm when armed. No separate confirm gesture needed. |
 | 3 | One shot, then disarm |
 | 4 | Anything else disarms (fail closed) |
 | 5 | Stale for `arm_timeout_ms` (30s by default), disarm |
+
+## Copying something you did not drag
+
+Half the copying you do is one click: the copy glyph next to a code block, a
+`mailto:` chip, "Copy link address". None of that makes a selection, so a
+drag-only trigger never sees it.
+
+MagiClick does, without touching the browser. A click with no drag, followed
+within `copy_click_window_ms` (600 ms) by a clipboard change **it did not
+write**, is a copy you asked for — and it arms exactly like a drag does. The
+clipboard baseline is sampled at the moment of the click, so a copy you made
+earlier (a `Ctrl+C`, or something already sitting on the clipboard) can never
+be mistaken for one this click caused.
+
+Turn it off with `arm_on_copy = "off"` in your config.
 
 Rule 2 is the one that makes it work: when armed, a single click places the
 caret and pastes immediately (one-shot). A stray click after arming still fires,

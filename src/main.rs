@@ -9,12 +9,13 @@ mod inject;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use config::{ConfirmAction, Config};
+use clipboard::Clipboard;
+use config::{ArmOnCopy, ConfirmAction, Config};
 use core::{Event, Outcome, Router, Selection};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use std::sync::mpsc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 #[derive(Parser)]
@@ -128,6 +129,37 @@ fn arm_window(base_ms: u64, scale: u8) -> String {
 /// still there.
 fn is_new_selection(seen: u64, baseline: Option<u64>, owned: Option<u64>, settled: bool) -> bool {
     Some(seen) != baseline || (settled && owned == Some(seen))
+}
+
+/// Did a copy land that this click caused?
+///
+/// A copy glyph and "Copy link address" both put the text on CLIPBOARD, so that
+/// is asked first. PRIMARY is the fallback for apps that only publish there —
+/// but a click that collapses a selection *clears* primary, and a cleared
+/// primary is not a copy, so empty reads are ignored.
+///
+/// The baseline was sampled at the moment of the click, so anything that differs
+/// from it arrived afterwards. That ordering is the whole guarantee: a copy made
+/// before the click cannot arm.
+fn copy_since_click(
+    clip: &dyn Clipboard,
+    clip_base: Option<u64>,
+    primary_base: Option<u64>,
+    owned: Option<u64>,
+) -> Option<(String, &'static str)> {
+    if let Ok(Some(t)) = clip.clipboard() {
+        let h = hash(&t);
+        if Some(h) != clip_base && Some(h) != owned {
+            return Some((t, "clipboard"));
+        }
+    }
+    if let Ok(Some(t)) = clip.primary() {
+        let h = hash(&t);
+        if Some(h) != primary_base && Some(h) != owned {
+            return Some((t, "primary"));
+        }
+    }
+    None
 }
 
 /// Best effort: which app were we in? Used only for logging and, later, for
@@ -292,6 +324,13 @@ fn run() -> Result<()> {
     let mut primary_before: Option<u64> = clip.primary().ok().flatten().map(|t| hash(&t));
     let mut clip_before: Option<u64> = clip.clipboard().ok().flatten().map(|t| hash(&t));
 
+    // A click with nothing armed opens a short window. If a copy lands inside
+    // it, that copy was caused by the click — a copy glyph, or "Copy link
+    // address" — and arms exactly like a drag would.
+    let mut copy_click: Option<Instant> = None;
+    let mut copy_click_base: Option<u64> = None;
+    let mut last_copy_poll = Instant::now();
+
     runtime::set_state(if enabled { "idle" } else { "off" });
 
     // Keep the bar icon honest: publish only on change.
@@ -323,12 +362,17 @@ fn run() -> Result<()> {
                 enabled = now_enabled;
                 if !enabled {
                     router.handle(core::Event::Interference("disabled"));
+                    // The arm is gone, so forget when it happened: a click ten
+                    // seconds from now is not "past the window", and the
+                    // diagnostic would otherwise report a stale one.
+                    last_arm = None;
                     say!("auto-copy turned off");
                 } else {
                     // An arm made before the toggle must not survive it, or the
                     // first click after switching back on fires a paste nobody
                     // asked for.
                     let _ = router.handle(core::Event::Interference("re-enabled"));
+                    last_arm = None;
                     say!("auto-copy turned on");
                 }
                 publish!();
@@ -355,6 +399,10 @@ fn run() -> Result<()> {
                     continue;
                 }
                 drag::Input::Drag if enabled => {
+                    // A drag is selecting, not clicking a copy control. Close any
+                    // window a previous click opened so the two paths cannot both
+                    // claim the same copy.
+                    copy_click = None;
                     // The new selection is published some time after the button
                     // comes up. Ask the primary selection first — that is what a
                     // drag in a browser or a terminal actually sets — and only
@@ -496,6 +544,21 @@ fn run() -> Result<()> {
                                 );
                             }
                         }
+                        // Nothing armed, so this click is free to become an arm:
+                        // copy glyphs, "Copy link address" and every other
+                        // "this click copied something" case begin here.
+                        //
+                        // The baseline is sampled now rather than trusted from
+                        // the last drag. A Ctrl+C since then would otherwise look
+                        // like a copy this click caused.
+                        if cfg.arm_on_copy == ArmOnCopy::Click {
+                            copy_click = Some(Instant::now());
+                            let base = clip.clipboard().ok().flatten().map(|t| hash(&t));
+                            copy_click_base = base;
+                            clip_before = base;
+                            last_copy_poll = Instant::now();
+                        }
+                        continue;
                     }
                     // Bar, desktop, layer surface: never a text field, and always
                     // a navigation gesture — "which desktop / which window".
@@ -519,13 +582,97 @@ fn run() -> Result<()> {
                     }
                     Event::Click
                 }
-                drag::Input::Confirm if enabled => Event::Confirm,
-                drag::Input::Cancel if enabled => Event::Interference("right-clicked"),
-                drag::Input::KeyCode if enabled => Event::Interference("typed"),
+                drag::Input::Confirm if enabled => {
+                    copy_click = None;
+                    Event::Confirm
+                }
+                drag::Input::Cancel if enabled => {
+                    // Right-click is how "Copy link address" starts: the menu
+                    // item that does the copying is a click or two away. Disarm
+                    // as always, and open the same window for the copy that the
+                    // menu is about to make.
+                    if cfg.arm_on_copy == ArmOnCopy::Click {
+                        copy_click = Some(Instant::now());
+                        let base = clip.clipboard().ok().flatten().map(|t| hash(&t));
+                        copy_click_base = base;
+                        clip_before = base;
+                        last_copy_poll = Instant::now();
+                    }
+                    Event::Interference("right-clicked")
+                }
+                drag::Input::KeyCode if enabled => {
+                    // Typing means the click window is over: nothing about a
+                    // keystroke suggests a copy glyph was pressed.
+                    copy_click = None;
+                    Event::Interference("typed")
+                }
                 _ => continue,
             },
             Err(mpsc::RecvTimeoutError::Timeout) => {
-                let mut ev = Event::Tick(Instant::now());
+                let now = Instant::now();
+                let mut ev = Event::Tick(now);
+
+                // The copy window. Polling starts only when a click opened one,
+                // so an idle daemon still touches the clipboard exactly as often
+                // as it used to: never.
+                if let Some(at) = copy_click {
+                    if now.saturating_duration_since(at)
+                        >= Duration::from_millis(cfg.copy_click_window_ms)
+                    {
+                        copy_click = None;
+                    } else if last_copy_poll.elapsed() >= Duration::from_millis(50) {
+                        last_copy_poll = now;
+                        if let Some((text, from)) = copy_since_click(
+                            &*clip,
+                            copy_click_base,
+                            primary_before,
+                            owned_hash,
+                        ) {
+                            copy_click = None;
+                            // Same normalisation as a drag: `wl-copy -n` cannot
+                            // remove a newline the copy already carried.
+                            let text = core::trim_selection(&text).to_string();
+                            if !text.is_empty() {
+                                if text.len() > cfg.max_bytes {
+                                    say!(
+                                        "copy too big to carry ({} bytes, limit {}) — ignored",
+                                        text.len(),
+                                        cfg.max_bytes
+                                    );
+                                } else {
+                                    let h = hash(&text);
+                                    // Whatever the site put on the clipboard, we
+                                    // re-write it: the paste injects ctrl+v and
+                                    // pastes the clipboard, not our copy of the
+                                    // text, so the two must be the same bytes.
+                                    if owned_hash != Some(h) {
+                                        if let Err(e) = clip.set_clipboard(&text) {
+                                            say!("clipboard write failed: {e}");
+                                        }
+                                    }
+                                    owned_hash = Some(h);
+                                    clip_before = Some(h);
+                                    if from == "primary" {
+                                        primary_before = Some(h);
+                                    }
+                                    let app = source_app();
+                                    say!(
+                                        "copied {} bytes from a copy click in {}",
+                                        text.len(),
+                                        app.as_deref().unwrap_or("?")
+                                    );
+                                    ev = Event::DragCopied(Selection {
+                                        hash: h,
+                                        len: text.len(),
+                                        source_app: app,
+                                        text,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+
                 if router.is_armed() {
                     // While armed, watch for something else taking the clipboard.
                     // Once a second is enough for a safety net, and after the
@@ -694,6 +841,102 @@ mod tests {
         // First read after release: the old selection may still be standing
         // while the app is about to publish the new one. Waiting is free.
         assert!(!is_new_selection(7, Some(7), Some(7), false));
+    }
+
+    /// A clipboard whose two streams the test controls.
+    struct Fake {
+        primary: Option<String>,
+        clipboard: std::cell::RefCell<Option<String>>,
+        written: std::cell::RefCell<Vec<String>>,
+    }
+
+    impl Fake {
+        fn new(primary: Option<&str>, clipboard: Option<&str>) -> Self {
+            Self {
+                primary: primary.map(String::from),
+                clipboard: std::cell::RefCell::new(clipboard.map(String::from)),
+                written: std::cell::RefCell::new(Vec::new()),
+            }
+        }
+    }
+
+    impl Clipboard for Fake {
+        fn name(&self) -> &'static str {
+            "fake"
+        }
+        fn primary(&self) -> Result<Option<String>> {
+            Ok(self.primary.clone())
+        }
+        fn clipboard(&self) -> Result<Option<String>> {
+            Ok(self.clipboard.borrow().clone())
+        }
+        fn set_clipboard(&self, text: &str) -> Result<()> {
+            self.written.borrow_mut().push(text.to_string());
+            *self.clipboard.borrow_mut() = Some(text.to_string());
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_copy_that_lands_after_the_click_is_taken() {
+        // Copy glyph: clipboard was "old" when the click landed, "new" after.
+        let clip = Fake::new(None, Some("new"));
+        let got = copy_since_click(&clip, Some(hash("old")), None, None);
+        assert_eq!(got, Some(("new".to_string(), "clipboard")));
+        clip.set_clipboard("new").unwrap();
+        assert_eq!(*clip.written.borrow(), vec!["new".to_string()]);
+    }
+
+    #[test]
+    fn a_copy_that_was_already_there_before_the_click_is_refused() {
+        // The click did not cause this; it was on the clipboard all along. This
+        // is the whole reason the baseline is sampled at click time.
+        let clip = Fake::new(None, Some("old"));
+        assert_eq!(copy_since_click(&clip, Some(hash("old")), None, None), None);
+    }
+
+    #[test]
+    fn a_click_that_collapses_a_selection_does_not_arm() {
+        // PRIMARY cleared by the click itself: empty is not a copy, and the
+        // baseline moved with it.
+        let clip = Fake::new(None, Some("old"));
+        assert_eq!(
+            copy_since_click(&clip, Some(hash("old")), None, None),
+            None
+        );
+        // An unchanged non-empty primary is not news either.
+        let clip = Fake::new(Some("words"), Some("old"));
+        assert_eq!(
+            copy_since_click(&clip, Some(hash("old")), Some(hash("words")), None),
+            None
+        );
+    }
+
+    #[test]
+    fn a_copy_we_already_carry_does_not_arm() {
+        // Clicking the same copy glyph again: the clipboard moves, but not to
+        // anything new, so there is nothing to paste.
+        let clip = Fake::new(None, Some("same"));
+        assert_eq!(
+            copy_since_click(&clip, Some(hash("old")), None, Some(hash("same"))),
+            None
+        );
+    }
+
+    #[test]
+    fn a_primary_only_copy_still_arms() {
+        let clip = Fake::new(Some("picked"), Some("old"));
+        assert_eq!(
+            copy_since_click(&clip, Some(hash("old")), Some(hash("before")), None),
+            Some(("picked".to_string(), "primary"))
+        );
+    }
+
+    #[test]
+    fn copy_click_arms_only_when_configured() {
+        // Default is on: the feature is the product, and an arm is visible.
+        assert_eq!(Config::default().arm_on_copy, ArmOnCopy::Click);
+        assert_eq!(Config::default().copy_click_window_ms, 600);
     }
 }
 
