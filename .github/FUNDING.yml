@@ -1,12 +1,17 @@
 # The Sponsor button on the repository page.
 #
-# Every line here is commented out until the account exists, because GitHub
-# honours this file the moment it is pushed: a placeholder handle renders a
-# button that leads nowhere, which is worse than no button at all.
-#
-# `buy_me_a_coffee` takes the handle only, not the URL.
-# buy_me_a_coffee: your-handle
-#
-# Enrol at github.com/sponsors first — the button only appears once GitHub has
-# your payout and tax details, whatever this file says.
-# github: your-github-username
+# GitHub reads this file from the DEFAULT branch, and honours it the moment it
+# is pushed. The button does not render while the repository is private, and the
+# destination does not resolve until Sponsors approval is through — so this file
+# is correct now and starts working on its own, with no second edit.
+
+# GitHub Sponsors. The handle is the GitHub username; enrol at
+# github.com/sponsors first for the payouts and tax details.
+github: Blodrafen-dev
+
+# The tip jars. Both handles are registered and both pages are live. KO-FI is
+# the primary: it is what `magiclick support`, the bar widget's Support row and
+# the README open — SUPPORT_URL in src/main.rs. Keep the three in step: a link
+# only some surfaces know about is worse than one nothing links to.
+ko_fi: magiclick
+buy_me_a_coffee: magiclick

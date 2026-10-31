@@ -71,11 +71,13 @@ enum Cmd {
 /// threat model for a tip jar. So it prints the URL, and the only request ever
 /// made is the one your own browser makes, when you ask for it with `--open`.
 ///
-/// GitHub Sponsors is the destination because the code is already there: no
-/// second account, and the Sponsor button on the repository page lands on the
-/// same place. It 404s until Sponsors approval comes through, which costs
-/// nothing — the URL is correct now and starts working on its own.
-const SUPPORT_URL: &str = "https://github.com/sponsors/Blodrafen-dev";
+/// Ko-fi is the destination because it is the page that can hold everything —
+/// the tip button, memberships later, and a link list — with no approval step
+/// and no fee on one-time tips. Buy Me a Coffee is listed next to it in
+/// `.github/FUNDING.yml`. GitHub Sponsors is there too, but
+/// `/sponsors/Blodrafen-dev` still redirects to the profile until that listing
+/// is approved, so this does not point at it.
+const SUPPORT_URL: &str = "https://ko-fi.com/magiclick";
 
 /// "3m ago" reads faster than a wall clock when you are asking why a thing you
 /// just did did not happen.

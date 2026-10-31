@@ -199,19 +199,17 @@ magiclick support          # prints the link
 magiclick support --open   # opens it in your browser
 ```
 
+That link is **[ko-fi.com/magiclick](https://ko-fi.com/magiclick)**, and there is
+a **[Buy Me a Coffee page](https://buymeacoffee.com/magiclick)** on the same
+handle. The same link is the Support row in the bar widget's panel, and both
+pages are listed under the **Sponsor** button on the repository page through
+`.github/FUNDING.yml`. GitHub Sponsors is in that file too, and shows up once
+the listing is approved.
+
 `support` makes no request of its own — it prints a URL, and reaching the site
 is your browser's job. That is deliberate: this daemon reads every key you press
 and types into your focused window, so it does not open sockets for anything it
 was not asked to do.
-
-<!-- Fill in the handle in both places when the tip jar goes live: here and
-     SUPPORT_URL in src/main.rs. Until then `magiclick support` refuses to run,
-     because /magiclick may already belong to someone else.
-
-[buymeacoffee.com/HANDLE](https://www.buymeacoffee.com/HANDLE)
-
-Or use the **Sponsor** button on the repository page.
--->
 
 ## Roadmap
 
