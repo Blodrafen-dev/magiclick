@@ -19,8 +19,9 @@ pub enum Input {
     Press,
     /// Left button released after meaningful travel.
     Drag,
-    /// Left button released without travel.
-    Click,
+    /// Left button released without travel. Carries how far the pointer moved,
+    /// so a "click" that was really a short drag can be told apart later.
+    Click(u32),
     /// The configured confirm key.
     Confirm,
     /// Right button: "never mind". The cheapest way to throw an arm away.
@@ -218,7 +219,7 @@ fn pointer_loop(
                                 let msg = if travel >= threshold {
                                     Input::Drag
                                 } else {
-                                    Input::Click
+                                    Input::Click(travel.max(0) as u32)
                                 };
                                 if tx.send(msg).is_err() {
                                     stop.store(true, Ordering::Relaxed);

@@ -131,6 +131,41 @@ fn is_new_selection(seen: u64, baseline: Option<u64>, owned: Option<u64>, settle
     Some(seen) != baseline || (settled && owned == Some(seen))
 }
 
+/// Did the gesture that just ended leave a selection behind?
+///
+/// The pointer reader classifies a release as a click or a drag by how far the
+/// pointer travelled, and that threshold is a guess about the mouse — not a fact
+/// about the user. Apps select on any movement at all, so a quick, short drag
+/// selects a word and still looks like a click here. Treating it as a click
+/// pastes over the selection that was just made, which is the one thing this
+/// program must never do.
+///
+/// The app is the authority. New non-empty text on either stream means the
+/// gesture was selecting, whatever our threshold said. Both streams matter:
+/// terminals and GTK publish to PRIMARY, Chromium and Electron only to CLIPBOARD.
+fn release_left_a_selection(
+    clip: &dyn Clipboard,
+    primary_base: Option<u64>,
+    clip_base: Option<u64>,
+    owned: Option<u64>,
+) -> bool {
+    let fresh = |t: &str, base: Option<u64>| {
+        let h = hash(t);
+        Some(h) != base && Some(h) != owned
+    };
+    if let Ok(Some(t)) = clip.primary() {
+        if !t.is_empty() && fresh(&t, primary_base) {
+            return true;
+        }
+    }
+    if let Ok(Some(t)) = clip.clipboard() {
+        if !t.is_empty() && fresh(&t, clip_base) {
+            return true;
+        }
+    }
+    false
+}
+
 /// Did a copy land that this click caused?
 ///
 /// A copy glyph and "Copy link address" both put the text on CLIPBOARD, so that
@@ -402,7 +437,29 @@ fn run() -> Result<()> {
         }
 
         let event = match rx.recv_timeout(Duration::from_millis(100)) {
-            Ok(input) => match input {
+            Ok(input) => {
+                // A click is not always a click. Short drags select text too, and
+                // the difference between "I selected this" and "I am confirming"
+                // is whether anything new got selected — not how far the mouse
+                // moved. Checked here, before the match, because the answer
+                // routes the gesture down the drag path instead.
+                let short_drag = enabled
+                    && router.is_armed()
+                    && matches!(input, drag::Input::Click(_))
+                    && release_left_a_selection(
+                        &*clip,
+                        primary_before,
+                        clip_before,
+                        owned_hash,
+                    );
+                if let drag::Input::Click(travel) = input {
+                    if short_drag {
+                        say!(
+                            "click with {travel} units of travel left a new selection — treated as a drag, not a confirm"
+                        );
+                    }
+                }
+                match input {
                 drag::Input::Press if enabled => {
                     // Nothing to do. The "what did we have before the drag"
                     // baseline is whatever the last drag left behind, so taking
@@ -410,7 +467,7 @@ fn run() -> Result<()> {
                     // costs a clipboard transfer on every click on the desktop.
                     continue;
                 }
-                drag::Input::Drag if enabled => {
+                drag::Input::Drag if enabled || short_drag => {
                     // A drag is selecting, not clicking a copy control. Close any
                     // window a previous click opened so the two paths cannot both
                     // claim the same copy.
@@ -544,7 +601,7 @@ fn run() -> Result<()> {
                         }
                     }
                 }
-                drag::Input::Click if enabled => {
+                drag::Input::Click(_) if enabled && !short_drag => {
                     // Diagnosis: a click that lands after the arm expired looks
                     // identical to "nothing happened" from the outside. Say so.
                     if !router.is_armed() {
@@ -621,7 +678,8 @@ fn run() -> Result<()> {
                     Event::Interference("typed")
                 }
                 _ => continue,
-            },
+                }
+            }
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 let now = Instant::now();
                 let mut ev = Event::Tick(now);
@@ -987,6 +1045,57 @@ mod tests {
             copy_since_click(&clip, Some(hash("old")), Some(hash("before")), None),
             Some(("picked".to_string(), "primary"))
         );
+    }
+
+    #[test]
+    fn a_short_drag_that_selected_text_is_not_a_confirm() {
+        // The whole reason this exists: apps select on any movement, our
+        // threshold is coarser than the user's gesture. A release that left new
+        // text on PRIMARY was selecting, and pasting over it would destroy the
+        // selection the user just made.
+        let clip = Fake::new(Some("new words"), Some("old"));
+        assert!(release_left_a_selection(
+            &clip,
+            Some(hash("previous")),
+            Some(hash("old")),
+            Some(hash("carried"))
+        ));
+    }
+
+    #[test]
+    fn a_chromium_short_drag_counts_even_though_primary_never_moved() {
+        // Chromium and Electron publish selections to CLIPBOARD only, so a
+        // PRIMARY-only check would let a short drag in a browser paste.
+        let clip = Fake::new(None, Some("browser selected this"));
+        assert!(release_left_a_selection(
+            &clip,
+            Some(hash("previous")),
+            Some(hash("old clip")),
+            None
+        ));
+    }
+
+    #[test]
+    fn a_click_that_selected_nothing_is_still_a_confirm() {
+        // Both streams unchanged: the click was clicking, not selecting.
+        let clip = Fake::new(Some("previous"), Some("old"));
+        assert!(!release_left_a_selection(
+            &clip,
+            Some(hash("previous")),
+            Some(hash("old")),
+            None
+        ));
+        // Nothing selected anywhere: also not a selection.
+        let clip = Fake::new(None, None);
+        assert!(!release_left_a_selection(&clip, None, None, None));
+        // Text we already carry is not a new selection either.
+        let clip = Fake::new(Some("carried"), Some("carried"));
+        assert!(!release_left_a_selection(
+            &clip,
+            Some(hash("previous")),
+            Some(hash("previous")),
+            Some(hash("carried"))
+        ));
     }
 
     #[test]
