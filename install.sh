@@ -46,12 +46,14 @@ fi
 
 echo "==> omarchy bar widget"
 if [ -d "${HOME}/.config/omarchy/plugins" ]; then
+    # Not copied on purpose. Omarchy installs a plugin by cloning one repository
+    # and validating its root, and it updates it with a fast-forward merge in
+    # that folder. A hand-copied widget is not a checkout, so it can never be
+    # updated -- and a second copy here would compete with the real one for the
+    # same bar slot. Point at the repository instead.
     rm -rf "${HOME}/.config/omarchy/plugins/dek.${LEGACY}"
-    install -d "${HOME}/.config/omarchy/plugins/dek.magiclick"
-    cp "$SRC_DIR/contrib/omarchy-widget/manifest.json" "$SRC_DIR/contrib/omarchy-widget/MagiClick.qml" \
-        "${HOME}/.config/omarchy/plugins/dek.magiclick/"
-    echo "    installed to ~/.config/omarchy/plugins/dek.magiclick"
-    echo "    add to the bar:  omarchy bar put dek.magiclick right"
+    echo "    the widget is its own plugin repository:"
+    echo "        omarchy plugin add https://github.com/Blodrafen-dev/omarchy-magiclick.git --enable"
 else
     echo "    skipped (no Omarchy shell found)"
 fi

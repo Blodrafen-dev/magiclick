@@ -60,8 +60,10 @@ what the README claims. Run it before you trust it.
 ## Install
 
 ```sh
-./install.sh          # builds, installs to ~/.local/bin, enables the user unit
-magiclick doctor       # verify
+git clone https://github.com/Blodrafen-dev/magiclick
+cd magiclick
+./install.sh          # builds, installs to ~/.local/bin, installs the user unit
+magiclick doctor      # verify — reports what actually works here
 ```
 
 Requirements: `cargo`, membership in the `input` group, `wl-clipboard` on
@@ -130,9 +132,13 @@ thing whose job is to tell you it is armed. Right click opens the
 same menu, with the window in force ticked, which is also what the tooltip
 reports.
 
+The widget is its own repository, because Omarchy installs a plugin by cloning
+one repository and validating its root — and updates it by fast-forwarding that
+checkout. A widget copied by a script is not a checkout, so it could never be
+updated. Install it from there:
+
 ```sh
-./install.sh                                  # copies the widget when Omarchy is present
-omarchy bar put dek.magiclick right
+omarchy plugin add https://github.com/Blodrafen-dev/omarchy-magiclick.git --enable
 ```
 
 
