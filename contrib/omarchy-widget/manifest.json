@@ -5,7 +5,7 @@
   "version": "0.1.0",
   "author": "dek",
   "license": "MIT",
-  "description": "Drag-to-copy state: off, watching, armed. Click to toggle.",
+  "description": "Auto-copy state: off, on, armed. Click to toggle.",
   "kinds": [
     "bar-widget"
   ],
@@ -14,7 +14,7 @@
   },
   "barWidget": {
     "displayName": "MagiClick",
-    "description": "Shows whether MagiClick is off, watching, or armed, and toggles it",
+    "description": "Shows whether MagiClick is off, on, or armed, and toggles it",
     "category": "System",
     "allowMultiple": false
   }

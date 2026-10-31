@@ -6,8 +6,8 @@
 # fires inside a real window, so a longer arm is not a longer risk.
 arm_timeout_ms = 30000
 
-# Device units of pointer travel before a button press counts as a drag
-# rather than a click. Raise it if short selections never arm.
+# Device units of pointer travel before a press counts as selecting rather
+# than a click. Raise it if short selections never arm.
 drag_threshold = 40
 
 # The confirm key. Bind your thumb button or foot pedal to this.
@@ -23,7 +23,7 @@ confirm_action = "observe"
 # Set an explicit chord only to override that.
 paste_chord = "auto"
 
-# Copy drag selections to the clipboard automatically.
+# Copy selections to the clipboard automatically.
 copy_on_drag = true
 
 # Refuse to carry anything larger than this. A 4MB blob is almost never

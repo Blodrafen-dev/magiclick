@@ -1,13 +1,13 @@
 # MagiClick
 
-Drag over text. Click where it goes. It's already there.
+Select text. Click where it goes. It's already there.
 
 `MagiClick` is a small daemon for Linux that turns selecting text into a
 clipboard copy, then waits for you to *choose* where to paste it — and never
 guesses.
 
 ```
-drag ──► armed ──► click ──► pasted ──► disarmed (click IS confirm)
+select ──► armed ──► click ──► pasted ──► disarmed (click IS confirm)
                                         └─ anything else ──► disarmed
 ```
 
@@ -24,7 +24,7 @@ prediction engine. It is a tripwire that is easy to arm and easy to disarm.
 
 | # | Rule |
 |---|---|
-| 1 | Arm on drag-select. Re-dragging the pending text does not extend the arm. |
+| 1 | Arm on selection. Re-selecting the pending text does not extend the arm. |
 | 2 | Click IS confirm when armed. No separate confirm gesture needed. |
 | 3 | One shot, then disarm |
 | 4 | Anything else disarms (fail closed) |
@@ -44,8 +44,8 @@ random click into a paste.
 
 ## Status
 
-Linux, Wayland + X11. Detects drags from `/dev/input` directly, so the
-compositor never has to cooperate.
+Linux, Wayland + X11. Watches the input devices for selections straight from
+`/dev/input`, so the compositor never has to cooperate.
 
 | | |
 |---|---|
@@ -146,13 +146,13 @@ magiclick log -n 40
 Every decision is one line, written where it happens:
 
 ```
- just now  a drag in chromium did not change the selection (12 bytes already selected, 12 bytes on the clipboard) — nothing copied
+ just now  a selection in chromium did not change (12 bytes already selected, 12 bytes on the clipboard) — nothing copied
    4s ago  armed 12 bytes from chromium — click where it goes
   41s ago  a click landed 41.2s after the arming, past the 30s window — nothing pasted
 ```
 
-That is the whole point: a miss is usually one of four things — the drag selected
-nothing, the arm expired, something interrupted it, or the click was refused — and
+That is the whole point: a miss is usually one of four things — the selection did
+not change, the arm expired, something interrupted it, or the click was refused — and
 the log names which. It goes to the journal under the same wording, so
 `journalctl --user -u magiclick` and `magiclick log` never disagree. The file is
 in `$XDG_RUNTIME_DIR/magiclick/recent` and clears at logout: it is a debugging
@@ -170,11 +170,11 @@ the parts that are deliberately unfinished.
 
 ## Roadmap
 
-- [x] copy-on-drag, native evdev
+- [x] auto-copy, native evdev
 - [x] five-rule router, unit tested
 - [x] `doctor`
 - [ ] `wl_data_device_manager` natively (drop `wl-clipboard` entirely)
-- [ ] app-pair memory: learn "terminal → editor" from your own drags
+- [ ] app-pair memory: learn "terminal → editor" from your own selections
 - [ ] Windows backend (UIA `TextPattern`, not a blind Ctrl+C)
 - [ ] GNOME Wayland (libei/EIS)
 

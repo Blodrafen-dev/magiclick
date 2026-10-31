@@ -1,5 +1,5 @@
 [Unit]
-Description=MagiClick — drag to copy, confirm to paste
+Description=MagiClick — auto-copy a selection, confirm to paste
 After=graphical-session.target
 PartOf=graphical-session.target
 

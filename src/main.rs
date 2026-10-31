@@ -17,7 +17,7 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 #[derive(Parser)]
-#[command(name = "magiclick", version, about = "Drag to copy, confirm to paste.")]
+#[command(name = "magiclick", version, about = "Auto-copy a selection, confirm to paste.")]
 struct Cli {
     #[command(subcommand)]
     command: Option<Cmd>,
@@ -229,7 +229,7 @@ fn run() -> Result<()> {
     };
 
     say!(
-        "watching {n} input device(s), confirm on {} ({:?}), arm window {}s",
+        "auto-copy: {n} input device(s), confirm on {} ({:?}), arm window {}s",
         cfg.confirm_key,
         cfg.confirm_action,
         timeout_ms / 1000
@@ -243,8 +243,8 @@ fn run() -> Result<()> {
     let mut published = String::new();
     let mut last_control_check = Instant::now();
     let mut last_arm: Option<Instant> = None;
-    // What the selections held after the last drag. Read once here, then only
-    // updated by our own drags: polling them while idle meant asking whichever
+    // What the selections held after the last copy. Read once here, then only
+    // updated by our own copies: polling them while idle meant asking whichever
     // app owns the clipboard for a transfer every second, forever, for a value
     // nobody was looking at.
     let mut primary_before: Option<u64> = clip.primary().ok().flatten().map(|t| hash(&t));
@@ -277,13 +277,13 @@ fn run() -> Result<()> {
                 enabled = now_enabled;
                 if !enabled {
                     router.handle(core::Event::Interference("disabled"));
-                    say!("watching turned off");
+                    say!("auto-copy turned off");
                 } else {
                     // An arm made before the toggle must not survive it, or the
                     // first click after switching back on fires a paste nobody
                     // asked for.
                     let _ = router.handle(core::Event::Interference("re-enabled"));
-                    say!("watching turned on");
+                    say!("auto-copy turned on");
                 }
                 publish!();
             }
@@ -371,7 +371,7 @@ fn run() -> Result<()> {
                                 clip_before = Some(h);
                             }
                             say!(
-                                "a drag in {} did not change the selection ({} already selected, {}) — nothing copied",
+                                "a selection in {} did not change ({} already selected, {}) — nothing copied",
                                 source_app().unwrap_or_else(|| "?".into()),
                                 match last_p {
                                     Some((n, _)) => format!("{n} bytes"),
