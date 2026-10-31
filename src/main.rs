@@ -318,6 +318,13 @@ fn run() -> Result<()> {
 
     let mut last_clipboard_check = Instant::now();
     let mut owned_hash: Option<u64> = None;
+    // When we last put text on the clipboard, and how much of it. `wl-copy`
+    // forks and serves the data from the child, so between the write and the
+    // child taking ownership a read still returns whatever was there before.
+    // That window is short, and it used to look exactly like a foreign copy —
+    // which disarmed every arm made in a terminal moments after it was made.
+    let mut owned_at = Instant::now();
+    let mut owned_len: Option<usize> = None;
     let mut enabled = runtime::control().map(|c| c != "off").unwrap_or(true);
     let mut published = String::new();
     let mut last_control_check = Instant::now();
@@ -511,6 +518,8 @@ fn run() -> Result<()> {
                                 }
                             }
                             owned_hash = Some(h);
+                            owned_at = Instant::now();
+                            owned_len = Some(text.len());
                             // Rebase the baselines to the live state: our own
                             // clipboard write must never look like a new drag,
                             // and the source we took the text from now holds it.
@@ -656,6 +665,8 @@ fn run() -> Result<()> {
                                         }
                                     }
                                     owned_hash = Some(h);
+                                    owned_at = Instant::now();
+                                    owned_len = Some(text.len());
                                     clip_before = Some(h);
                                     if from == "primary" {
                                         primary_before = Some(h);
@@ -683,11 +694,38 @@ fn run() -> Result<()> {
                     // Once a second is enough for a safety net, and after the
                     // first read it is our own `wl-copy` serving the data, so
                     // this stays cheap.
-                    if last_clipboard_check.elapsed() > Duration::from_millis(1000) {
+                    //
+                    // Two guards keep this from firing on our own write:
+                    //
+                    //  * `wl-copy` forks and the child serves the data, so for a
+                    //    few milliseconds after `set_clipboard` a read still
+                    //    returns the PREVIOUS contents. That is not a foreign
+                    //    copy, and treating it as one disarmed every arm made in
+                    //    a terminal within the same tick it was made.
+                    //  * a single bad read is not a takeover. A real foreign copy
+                    //    is still there 250ms later; a race is not.
+                    if last_clipboard_check.elapsed() > Duration::from_millis(1000)
+                        && owned_at.elapsed() > Duration::from_millis(300)
+                    {
                         last_clipboard_check = Instant::now();
                         if let Ok(Some(current)) = clip.clipboard() {
                             if Some(hash(&current)) != owned_hash {
-                                ev = Event::ClipboardMoved;
+                                // Confirm before acting. Confirming costs 250ms
+                                // and removes the entire false-disarm class.
+                                std::thread::sleep(Duration::from_millis(250));
+                                let again = clip.clipboard().ok().flatten();
+                                let still_foreign = matches!(
+                                    again.as_ref(),
+                                    Some(t) if Some(hash(t)) != owned_hash
+                                );
+                                if still_foreign {
+                                    say!(
+                                        "clipboard now holds {} bytes, the arm holds {} — something else took it",
+                                        again.as_ref().map(|t| t.len()).unwrap_or(0),
+                                        owned_len.unwrap_or(0)
+                                    );
+                                    ev = Event::ClipboardMoved;
+                                }
                             }
                         }
                     }
