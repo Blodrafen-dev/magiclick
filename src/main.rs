@@ -203,6 +203,11 @@ fn support(open: bool) -> Result<()> {
 }
 
 fn main() -> Result<()> {
+    // Restore the default SIGPIPE behaviour. Rust ignores it, so `magiclick log
+    // | head` panicked on a broken pipe instead of exiting the way every other
+    // CLI does — and piping into `head` is how this is actually read.
+    restore_sigpipe();
+
     let cli = Cli::parse();
     match cli.command.unwrap_or(Cmd::Run) {
         Cmd::Doctor => {
@@ -761,6 +766,20 @@ fn install_stop_handlers() {
     unsafe {
         signal(SIGTERM, h);
         signal(SIGINT, h);
+    }
+}
+
+/// Put SIGPIPE back to its default, which Rust turns off at startup.
+///
+/// Without this, `magiclick log | head -5` ends with a panic message about a
+/// broken pipe rather than simply stopping, which makes the CLI look broken at
+/// exactly the moment someone is reading it.
+fn restore_sigpipe() {
+    const SIGPIPE: i32 = 13;
+    const SIG_DFL: usize = 0;
+    // SAFETY: SIG_DFL for SIGPIPE is the documented POSIX default.
+    unsafe {
+        signal(SIGPIPE, SIG_DFL);
     }
 }
 
