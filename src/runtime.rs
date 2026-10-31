@@ -36,6 +36,17 @@ pub fn state() -> String {
         .unwrap_or_else(|_| "off".into())
 }
 
+/// Remove the state file on a clean exit.
+///
+/// The bar reads an absent file as "nothing is running", which is only honest
+/// if a daemon that stops removes it. Left in place, a stopped daemon keeps
+/// advertising its last state — the widget says "Auto-copy on" while nothing is
+/// watching, which is worse than saying nothing. A `kill -9` still leaves a
+/// stale file; nothing short of a heartbeat fixes that.
+pub fn clear_state() {
+    let _ = std::fs::remove_file(state_path());
+}
+
 /// "on" | "off". Written by `magiclick toggle`, read by the daemon.
 pub fn set_control(v: &str) {
     ensure_dir();

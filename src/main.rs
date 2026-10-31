@@ -14,6 +14,7 @@ use core::{Event, Outcome, Router, Selection};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 #[derive(Parser)]
@@ -245,6 +246,11 @@ fn run() -> Result<()> {
     let cfg = Config::load()?;
     let confirm_code = confirm_key_code(&cfg.confirm_key)?;
 
+    // A clean stop for the bar: on SIGTERM/SIGINT we finish the current event,
+    // remove the state file, and exit. Without this, `systemctl stop` leaves the
+    // last state on disk and the widget keeps claiming the daemon is working.
+    install_stop_handlers();
+
     let (tx, rx) = mpsc::channel::<drag::Input>();
     let n = drag::spawn_readers(confirm_code, cfg.drag_threshold, tx)?;
     if n == 0 {
@@ -306,6 +312,10 @@ fn run() -> Result<()> {
     }
 
     loop {
+        if STOP.load(Ordering::Relaxed) {
+            say!("stopping on signal");
+            break;
+        }
         if last_control_check.elapsed() > Duration::from_millis(250) {
             last_control_check = Instant::now();
             let now_enabled = runtime::control().map(|c| c != "off").unwrap_or(true);
@@ -577,7 +587,34 @@ fn run() -> Result<()> {
         publish!();
     }
 
+    runtime::clear_state();
     Ok(())
+}
+
+/// Set when SIGTERM/SIGINT arrives, so the event loop can exit at a safe point
+/// instead of being killed mid-write.
+static STOP: AtomicBool = AtomicBool::new(false);
+
+extern "C" fn on_stop_signal(_sig: i32) {
+    STOP.store(true, Ordering::SeqCst);
+}
+
+unsafe extern "C" {
+    /// `signal(2)`. Declared here rather than pulling in a signal crate for two
+    /// lines: the handler only stores a bool, so it is async-signal-safe.
+    fn signal(signum: i32, handler: usize) -> usize;
+}
+
+fn install_stop_handlers() {
+    const SIGINT: i32 = 2;
+    const SIGTERM: i32 = 15;
+    let h = on_stop_signal as *const () as usize;
+    // SAFETY: the handler only writes an atomic; SIG_ERR is ignored deliberately
+    // (a failed handler means the old behaviour: killed without cleanup).
+    unsafe {
+        signal(SIGTERM, h);
+        signal(SIGINT, h);
+    }
 }
 
 /// Debug aid: press a button, read its name. Held until Ctrl-C.
