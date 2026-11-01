@@ -15,6 +15,6 @@ pkgbase = magiclick-bin
 	options = !strip
 	options = !debug
 	source_x86_64 = https://github.com/Blodrafen-dev/magiclick/releases/download/v0.1.0/magiclick-0.1.0-x86_64-unknown-linux-gnu.tar.gz
-	sha256sums_x86_64 = SKIP
+	sha256sums_x86_64 = 8c78d13badb05c05c5d7318c8f3f763cc177946e8d666464f0b2a496095d2a87
 
 pkgname = magiclick-bin
