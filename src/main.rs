@@ -311,6 +311,20 @@ fn looks_like_same_selection(foreign: &str, armed: &str) -> bool {
     short.chars().count() >= 8 && long.contains(short.as_str())
 }
 
+/// Is the clipboard holding the app's *second* re-publication of the selection we
+/// already took back?
+///
+/// `same_gesture` allows that take-back exactly once per arm, and rightly: two
+/// owners ping-ponging over the clipboard is worse than either. But refusing the
+/// second take-back was also refusing the arm — the value matched our selection
+/// word for word, and the guard disarmed on it anyway. From the field log that
+/// looked like the tool dying two seconds after a good drag: `wl-copy -n` returns
+/// before its child owns the selection, so the app's version lands *after* ours,
+/// and the next tick reads it and calls it a stranger.
+fn republished_again(reasserted: bool, foreign: &str, armed: Option<&core::Selection>) -> bool {
+    reasserted && armed.is_some_and(|sel| looks_like_same_selection(foreign, &sel.text))
+}
+
 /// Put the armed text back on the clipboard, and wait — briefly — for it to land.
 ///
 /// `ctrl+v` pastes the clipboard, not our copy of the text, so at the moment of
@@ -1198,12 +1212,30 @@ fn run() -> Result<()> {
                                     let again = clip.clipboard().ok().flatten();
                                     let still_foreign = matches!(again.as_ref(), Some(t) if Some(hash(t)) != owned_hash);
                                     if still_foreign {
-                                        say!(
-                                            "clipboard now holds {} bytes, the arm holds {} — something else took it",
-                                            again.as_ref().map(|t| t.len()).unwrap_or(0),
-                                            owned_len.unwrap_or(0)
-                                        );
-                                        ev = Event::ClipboardMoved;
+                                        let foreign = again.unwrap_or_default();
+                                        if republished_again(
+                                            reasserted,
+                                            &foreign,
+                                            router.armed_selection(),
+                                        ) {
+                                            // The app wrote its version of the same selection a
+                                            // second time. Taking the clipboard back again would
+                                            // ping-pong, but dropping the arm drops the user's
+                                            // selection — and `Fire` puts our exact bytes back
+                                            // before pasting, so the divergence costs nothing.
+                                            say!(
+                                                "the app re-published the same selection again as {} bytes — keeping the arm on {}, ours goes back at paste",
+                                                foreign.len(),
+                                                owned_len.unwrap_or(0)
+                                            );
+                                        } else {
+                                            say!(
+                                                "clipboard now holds {} bytes, the arm holds {} — something else took it",
+                                                foreign.len(),
+                                                owned_len.unwrap_or(0)
+                                            );
+                                            ev = Event::ClipboardMoved;
+                                        }
                                     }
                                 }
                             }
@@ -1485,6 +1517,57 @@ mod tests {
     fn a_late_takeover_is_someone_else_copying() {
         // Past the gesture, the clipboard is being used by the user elsewhere.
         assert!(!same_gesture(Duration::from_secs(3), false));
+    }
+
+    #[test]
+    fn a_second_republish_of_our_selection_keeps_the_arm() {
+        // The field log, in one line: 465 bytes armed, the app wrote 464 a second
+        // later and we took it back, then 464 again. That second write is still
+        // the user's selection — disarming on it killed the arm silently.
+        let armed = core::Selection {
+            hash: hash("the line the user highlighted"),
+            len: 27,
+            source_app: Some("foot".into()),
+            text: "the line the user highlighted".into(),
+        };
+        assert!(republished_again(
+            true,
+            "the line the user highlighted ",
+            Some(&armed)
+        ));
+    }
+
+    #[test]
+    fn a_first_sighting_is_left_to_the_take_back_path() {
+        // Before any take-back `same_gesture` decides; this must not pre-empt it.
+        let armed = core::Selection {
+            hash: 1,
+            len: 3,
+            source_app: None,
+            text: "some long enough line".into(),
+        };
+        assert!(!republished_again(
+            false,
+            "some long enough line",
+            Some(&armed)
+        ));
+    }
+
+    #[test]
+    fn unrelated_text_after_a_take_back_is_still_a_takeover() {
+        let armed = core::Selection {
+            hash: 1,
+            len: 3,
+            source_app: None,
+            text: "some long enough line".into(),
+        };
+        assert!(!republished_again(
+            true,
+            "a completely different sentence",
+            Some(&armed)
+        ));
+        // Nothing armed is nothing to keep.
+        assert!(!republished_again(true, "some long enough line", None));
     }
 
     #[test]
