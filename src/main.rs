@@ -165,6 +165,58 @@ fn clipboard_is_news(seen: u64, clip_before: Option<u64>, owned: Option<u64>) ->
     Some(seen) != clip_before && Some(seen) != owned
 }
 
+/// What both streams held when the button went down.
+///
+/// This is the baseline for "did this gesture select something?". It is
+/// deliberately not the last text the daemon copied: a keyboard selection, a
+/// clipboard manager, or a Ctrl+C between two gestures changes a stream without
+/// the daemon witnessing a drag, and comparing against the last copy then made
+/// the next drag that selected nothing adopt that older text — the stale paste.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct AtPress {
+    primary: Option<u64>,
+    clipboard: Option<u64>,
+    /// False when the snapshot could not be taken in time. The caller falls back
+    /// to the last copy and says so in the log, rather than pretending.
+    sampled: bool,
+}
+
+/// Read both streams off the event loop, once per button press.
+///
+/// Two transfers per press is affordable. Blocking the router for up to 800ms on
+/// a wedged clipboard owner is not — that is indistinguishable from the daemon
+/// hanging, and it would happen on every click on the desktop.
+fn sample_at_press() -> mpsc::Receiver<(Option<u64>, Option<u64>)> {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let clip = clipboard::default_backend();
+        let primary = clip.primary().ok().flatten().map(|t| hash(&t));
+        let clipboard = clip.clipboard().ok().flatten().map(|t| hash(&t));
+        let _ = tx.send((primary, clipboard));
+    });
+    rx
+}
+
+/// The gesture's baseline, or the last copy's if the snapshot did not arrive.
+///
+/// Bounded wait: a drag lasts at least a few frames, so the answer is normally
+/// already there by the time the button comes up. When it is not, degrading to
+/// the old baseline beats stalling the router — and `sampled: false` is carried
+/// into the log so a degrading machine is visible rather than silent.
+fn settle_baseline(
+    pending: Option<mpsc::Receiver<(Option<u64>, Option<u64>)>>,
+    legacy: AtPress,
+) -> AtPress {
+    match pending.and_then(|rx| rx.recv_timeout(Duration::from_millis(120)).ok()) {
+        Some((primary, clipboard)) => AtPress {
+            primary,
+            clipboard,
+            sampled: true,
+        },
+        None => legacy,
+    }
+}
+
 /// Whether the clipboard still needs our write.
 ///
 /// `owned_hash` is bookkeeping, not evidence. Between two selections of the same
@@ -524,8 +576,9 @@ fn run() -> Result<()> {
     // otherwise look like a fresh selection and turn every confirm into a drag —
     // PRIMARY included, which is what a browser's selection had already put
     // there before the click.
-    let mut press_clip: Option<u64> = None;
-    let mut press_primary: Option<u64> = None;
+    // Started on every press and collected when the gesture ends; see
+    // `sample_at_press`. Never read on the event loop.
+    let mut press_snapshot: Option<mpsc::Receiver<(Option<u64>, Option<u64>)>> = None;
 
     runtime::set_state(if enabled { "idle" } else { "off" });
 
@@ -587,6 +640,17 @@ fn run() -> Result<()> {
 
         let event = match rx.recv_timeout(Duration::from_millis(100)) {
             Ok(input) => {
+                // What both streams held when this gesture began. A gesture
+                // that changed neither selected nothing, whatever text was
+                // already sitting there.
+                let at_press = settle_baseline(
+                    press_snapshot.take(),
+                    AtPress {
+                        primary: primary_before,
+                        clipboard: clip_before,
+                        sampled: false,
+                    },
+                );
                 // A click is not always a click. Short drags select text too, and
                 // the difference between "I selected this" and "I am confirming"
                 // is whether anything new got selected — not how far the mouse
@@ -597,8 +661,8 @@ fn run() -> Result<()> {
                     && matches!(input, drag::Input::Click(_))
                     && release_left_a_selection(
                         &*clip,
-                        press_primary.take().or(primary_before),
-                        press_clip.take().or(clip_before),
+                        at_press.primary,
+                        at_press.clipboard,
                         owned_hash,
                     );
                 if let drag::Input::Click(travel) = input
@@ -610,22 +674,17 @@ fn run() -> Result<()> {
                 }
                 match input {
                     drag::Input::Press if enabled => {
-                        // Nothing to do for the drag baselines: the "what did we have
-                        // before the drag" value is whatever the last drag left
-                        // behind, and reading it here would just read back our own
-                        // last copy on every click on the desktop.
+                        // Sample both streams before this gesture can change them.
                         //
-                        // While armed it is worth one transfer, because it answers a
-                        // narrower question: did anything reach the clipboard after
-                        // this press? That is the difference between a short drag
-                        // that selected text and a click that is confirming.
-                        if router.is_armed() {
-                            press_clip = clip.clipboard().ok().flatten().map(|t| hash(&t));
-                            press_primary = clip.primary().ok().flatten().map(|t| hash(&t));
-                        } else {
-                            press_clip = None;
-                            press_primary = None;
-                        }
+                        // This used to be skipped while nothing was armed, on the
+                        // theory that the last copy was a good enough baseline. It
+                        // is not: anything that changes PRIMARY or CLIPBOARD outside
+                        // a drag the daemon saw — a keyboard selection, a clipboard
+                        // manager, a Ctrl+C — then looks like a fresh selection on
+                        // the next drag that selected nothing, and that older text
+                        // is what gets pasted. Sampling here costs two transfers per
+                        // press and removes the whole class.
+                        press_snapshot = Some(sample_at_press());
                         continue;
                     }
                     drag::Input::Drag if enabled || short_drag => {
@@ -674,7 +733,7 @@ fn run() -> Result<()> {
                             }
                             let h = hash(&t);
                             last_p = Some((t.len(), h));
-                            if primary_moved(h, primary_before) {
+                            if primary_moved(h, at_press.primary) {
                                 picked = Some((t, "primary"));
                                 break;
                             }
@@ -693,7 +752,7 @@ fn run() -> Result<()> {
                                 {
                                     let h = hash(&t);
                                     last_c = Some((t.len(), h));
-                                    if clipboard_is_news(h, clip_before, owned_hash) {
+                                    if clipboard_is_news(h, at_press.clipboard, owned_hash) {
                                         picked = Some((t, "clipboard"));
                                         break;
                                     }
@@ -707,7 +766,7 @@ fn run() -> Result<()> {
                         // the only evidence there is, and nothing contradicted it.
                         if picked.is_none()
                             && let Some(text) = last_p_text
-                            && is_new_selection(hash(&text), primary_before, owned_hash, true)
+                            && is_new_selection(hash(&text), at_press.primary, owned_hash, true)
                         {
                             picked = Some((text, "primary"));
                         }
@@ -724,7 +783,7 @@ fn run() -> Result<()> {
                                     clip_before = Some(h);
                                 }
                                 say!(
-                                    "a selection in {} did not change ({} already selected, {}) — nothing copied",
+                                    "a selection in {} did not change since the button went down ({} already selected, {}) — nothing copied{}",
                                     source_app().unwrap_or_else(|| "?".into()),
                                     match last_p {
                                         Some((n, _)) => format!("{n} bytes"),
@@ -733,6 +792,11 @@ fn run() -> Result<()> {
                                     match last_c {
                                         Some((n, _)) => format!("{n} bytes on the clipboard"),
                                         None => "clipboard empty".into(),
+                                    },
+                                    if at_press.sampled {
+                                        ""
+                                    } else {
+                                        "; the clipboard did not answer at press, so the last copy is the baseline"
                                     }
                                 );
                                 continue;
@@ -1597,5 +1661,104 @@ mod tests {
         // Default is on: the feature is the product, and an arm is visible.
         assert_eq!(Config::default().arm_on_copy, ArmOnCopy::Click);
         assert_eq!(Config::default().copy_click_window_ms, 600);
+    }
+
+    #[test]
+    fn a_stale_primary_that_did_not_move_is_not_this_drags_selection() {
+        // The field regression, exactly: PRIMARY already held 13 bytes when the
+        // button went down, the drag selected nothing, and the daemon copied
+        // that older text because it differed from the last thing it copied.
+        let stale = hash("MC-MARKER-XYZ");
+        let last_copy = hash("something we carried earlier");
+        let at_press = AtPress {
+            primary: Some(stale),
+            clipboard: Some(last_copy),
+            sampled: true,
+        };
+        assert!(!primary_moved(stale, at_press.primary));
+        assert!(!is_new_selection(
+            stale,
+            at_press.primary,
+            Some(last_copy),
+            true
+        ));
+    }
+
+    #[test]
+    fn a_selection_published_during_the_gesture_is_still_taken() {
+        let at_press = AtPress {
+            primary: Some(hash("old")),
+            clipboard: None,
+            sampled: true,
+        };
+        assert!(primary_moved(hash("new"), at_press.primary));
+        assert!(is_new_selection(hash("new"), at_press.primary, None, true));
+    }
+
+    #[test]
+    fn a_copy_made_before_the_press_is_not_news() {
+        // Ctrl+C, then a drag that selects nothing: the clipboard was already
+        // holding this when the button went down, so the gesture did not make it.
+        let copied_earlier = hash("ctrl+c text");
+        assert!(!clipboard_is_news(
+            copied_earlier,
+            Some(copied_earlier),
+            None
+        ));
+    }
+
+    #[test]
+    fn a_copy_published_during_the_gesture_is_news() {
+        let at_press = AtPress {
+            primary: None,
+            clipboard: Some(hash("ctrl+c text")),
+            sampled: true,
+        };
+        assert!(clipboard_is_news(
+            hash("chromium selection"),
+            at_press.clipboard,
+            None
+        ));
+        // Our own write is never news, even though it changed the stream.
+        let ours = hash("ours");
+        assert!(!clipboard_is_news(ours, Some(ours), Some(ours)));
+    }
+
+    #[test]
+    fn re_selecting_text_we_carry_still_arms() {
+        // PRIMARY is frozen at the text we own and nothing else spoke: that is a
+        // deliberate re-selection, and the arm is allowed to move on to it.
+        let carried = hash("the same phrase");
+        assert!(is_new_selection(
+            carried,
+            Some(carried),
+            Some(carried),
+            true
+        ));
+    }
+
+    #[test]
+    fn a_missing_snapshot_degrades_to_the_last_copy_and_says_so() {
+        let legacy = AtPress {
+            primary: Some(1),
+            clipboard: Some(2),
+            sampled: false,
+        };
+        assert_eq!(settle_baseline(None, legacy), legacy);
+    }
+
+    #[test]
+    fn a_delivered_snapshot_is_used() {
+        let (tx, rx) = mpsc::channel();
+        tx.send((Some(7), None)).unwrap();
+        let got = settle_baseline(Some(rx), AtPress::default());
+        assert_eq!(
+            got,
+            AtPress {
+                primary: Some(7),
+                clipboard: None,
+                sampled: true,
+            }
+        );
     }
 }
