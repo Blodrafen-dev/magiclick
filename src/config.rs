@@ -13,6 +13,14 @@ pub struct Config {
     pub confirm_key: String,
     /// What a confirm does: "observe" (log only, zero risk) or "paste".
     pub confirm_action: ConfirmAction,
+    /// Whether a click on its own confirms an arm, or only `confirm_key` does.
+    ///
+    /// A click is a good confirm when it lands on a text field, and a bad one
+    /// when it lands on chrome that cannot be told apart from a field: a tab
+    /// strip, a "+" button, a toolbar. Linux offers no reliable veto for that
+    /// without an accessibility tree, so turning this off makes the confirm
+    /// deliberate instead of inferred.
+    pub confirm_on_click: bool,
     /// Chord injected in "paste" mode.
     pub paste_chord: String,
     /// Copy drag selections to the clipboard automatically.
@@ -54,6 +62,7 @@ impl Default for Config {
             drag_threshold: 40,
             confirm_key: "KEY_F13".into(),
             confirm_action: ConfirmAction::Observe,
+            confirm_on_click: true,
             paste_chord: "auto".into(),
             copy_on_drag: true,
             arm_on_copy: ArmOnCopy::Click,
@@ -136,6 +145,14 @@ mod tests {
         write(&base.join("magiclick").join("config.toml"));
         assert_eq!(resolve(&base), base.join("magiclick").join("config.toml"));
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn a_click_confirms_unless_it_is_turned_off() {
+        let on: Config = toml::from_str("").unwrap();
+        assert!(on.confirm_on_click, "click-to-paste is the default");
+        let off: Config = toml::from_str("confirm_on_click = false").unwrap();
+        assert!(!off.confirm_on_click);
     }
 
     #[test]

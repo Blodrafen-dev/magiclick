@@ -18,6 +18,16 @@ confirm_key = "KEY_F13"
 # "paste" actually injects the chord below.
 confirm_action = "observe"
 
+# Should a click on its own confirm an arm?
+#
+# true  — rule 2: when armed, a single click places the caret and pastes.
+# false — only confirm_key pastes. Turn this off if clicks keep firing where
+#         you did not mean them to: a "+" new-tab button, a tab strip, a
+#         toolbar. Those are inside a window, so no veto can reject them on
+#         Linux without an accessibility tree, and without one a button and a
+#         text field look identical.
+confirm_on_click = true
+
 # Injected when confirm_action = "paste".
 # "auto" picks ctrl+v, or ctrl+shift+v in terminals, from the focused window.
 # Set an explicit chord only to override that.

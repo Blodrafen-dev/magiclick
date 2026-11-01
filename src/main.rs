@@ -1031,9 +1031,18 @@ fn run() -> Result<()> {
                 {
                     pending_click = None;
                     if router.is_armed() {
-                        // Bar, desktop, layer surface: never a text field, and
-                        // always a navigation gesture.
-                        if compositor::click_target() == compositor::Target::NoWindow {
+                        if !cfg.confirm_on_click {
+                            // A click that lands on a button and a click that
+                            // lands on a text field are indistinguishable
+                            // without an accessibility tree, and the button
+                            // case pastes into whatever the button opened.
+                            // With this off, only the confirm key fires.
+                            say!(
+                                "click did not confirm — confirm_on_click is off, use the confirm key"
+                            );
+                        } else if compositor::click_target() == compositor::Target::NoWindow {
+                            // Bar, desktop, layer surface: never a text field, and
+                            // always a navigation gesture.
                             say!("click landed on the bar or desktop — kept armed, nothing pasted");
                         } else if !compositor::wait_for_focus(Duration::from_millis(400)) {
                             say!(

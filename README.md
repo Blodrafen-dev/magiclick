@@ -25,7 +25,7 @@ prediction engine. It is a tripwire that is easy to arm and easy to disarm.
 | # | Rule |
 |---|---|
 | 1 | Arm on selection — a drag, **or a click that copied** (copy glyphs, "Copy link address"). Re-selecting the pending text does not extend the arm. |
-| 2 | Click IS confirm when armed — once it is known to stand alone. A second click inside `multi_click_ms` is a selection, so it neither pastes nor arms. |
+| 2 | Click IS confirm when armed — once it is known to stand alone. A second click inside `multi_click_ms` is a selection, so it neither pastes nor arms. `confirm_on_click = false` makes `confirm_key` the only confirm. |
 | 3 | One shot, then disarm |
 | 4 | Anything else disarms (fail closed) |
 | 5 | Stale for `arm_timeout_ms` (30s by default), disarm |
@@ -60,6 +60,14 @@ config says. The same thing from a terminal is `magiclick arm-timeout 2`, or
 
 Rule 5 is the one that saves you. Without it, a forgotten arm turns your next
 random click into a paste.
+
+**Where rule 2 misfires.** A click on a browser's "+" button or a tab strip is
+inside a window, so it confirms — and then the paste lands in whatever that
+click opened, usually the new tab. Telling a button from a text field needs an
+accessibility tree, which terminals do not have and which is off by default on
+every desktop, so the daemon cannot veto it. If that is happening to you, set
+`confirm_on_click = false`: arming still works, and `confirm_key` becomes the
+only way to paste.
 
 ## Status
 
