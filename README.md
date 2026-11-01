@@ -78,6 +78,33 @@ what the README claims. Run it before you trust it.
 
 ## Install
 
+MagiClick is an Arch package and an Omarchy bar plugin. Two steps, in this
+order — the widget shows `off` and does nothing until the daemon exists.
+
+**1. The daemon.** `magiclick-bin` takes the prebuilt release;
+`magiclick` builds it from source.
+
+```sh
+yay -S magiclick-bin                            # or: paru -S magiclick-bin
+magiclick doctor                                # what actually works here
+systemctl --user enable --now magiclick.service
+```
+
+Then the two permissions its `post_install` prints:
+
+```sh
+sudo usermod -aG input "$USER"                                # then log out and back in
+sudo udevadm control --reload-rules && sudo udevadm trigger   # applies the uinput rule
+```
+
+**2. The bar widget.**
+
+```sh
+omarchy plugin add https://github.com/Blodrafen-dev/omarchy-magiclick.git --enable
+```
+
+### From source, without the AUR
+
 ```sh
 git clone https://github.com/Blodrafen-dev/magiclick
 cd magiclick
@@ -85,12 +112,8 @@ cd magiclick
 magiclick doctor      # verify — reports what actually works here
 ```
 
-Requirements: `cargo`, membership in the `input` group, `wl-clipboard` on
+That path needs `cargo`, membership in the `input` group, and `wl-clipboard` on
 Wayland (or `xclip` on X11).
-
-```sh
-sudo usermod -aG input "$USER"   # log out and back in
-```
 
 ## Configure
 
