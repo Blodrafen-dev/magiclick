@@ -156,6 +156,46 @@ fn must_write(owned: Option<u64>, h: u64, clip: &dyn Clipboard) -> bool {
     !matches!(clip.clipboard(), Ok(Some(ref c)) if hash(c) == h)
 }
 
+/// Whether a clipboard takeover is close enough to our own write to be part of
+/// the same gesture.
+///
+/// A terminal UI that copies the selection it just saw land (OSC 52) writes the
+/// clipboard a few hundred milliseconds after the drag, on top of ours. That is
+/// not somebody else copying — it is the app we selected in publishing its own
+/// idea of the same text — so the arm should survive it. A takeover later than
+/// this is a real one, and a second one for the same arm means the clipboard is
+/// genuinely in use elsewhere: fail closed there rather than ping-pong.
+fn same_gesture(since_owned: Duration, reasserted: bool) -> bool {
+    !reasserted && since_owned < Duration::from_millis(1500)
+}
+
+/// Put the armed text back on the clipboard, and wait — briefly — for it to land.
+///
+/// `ctrl+v` pastes the clipboard, not our copy of the text, so at the moment of
+/// the paste the two have to be the same bytes. A terminal UI that copies the
+/// selection it just saw re-publishes its own serialisation of it, and that can
+/// land after our write; pasting it would look right and be wrong in the ways
+/// that matter, like a missing line break in a command. So assert ours and
+/// confirm, bounded, because `wl-copy` forks and the child takes ownership a
+/// moment later.
+fn reassert_for_paste(clip: &dyn Clipboard, sel: &core::Selection) -> bool {
+    let ours = || clip.clipboard().ok().flatten().map(|t| hash(&t)) == Some(sel.hash);
+    if ours() {
+        return true;
+    }
+    if clip.set_clipboard(&sel.text).is_err() {
+        return false;
+    }
+    let deadline = Instant::now() + Duration::from_millis(300);
+    while Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+        if ours() {
+            return true;
+        }
+    }
+    false
+}
+
 /// Did the gesture that just ended leave a selection behind?
 ///
 /// The pointer reader classifies a release as a click or a drag by how far the
@@ -385,6 +425,8 @@ fn run() -> Result<()> {
     // which disarmed every arm made in a terminal moments after it was made.
     let mut owned_at = Instant::now();
     let mut owned_len: Option<usize> = None;
+    // One take-back per arm. Reset on every arm and disarm.
+    let mut reasserted = false;
     let mut enabled = runtime::control().map(|c| c != "off").unwrap_or(true);
     let mut published = String::new();
     let mut last_control_check = Instant::now();
@@ -402,6 +444,14 @@ fn run() -> Result<()> {
     let mut copy_click: Option<Instant> = None;
     let mut copy_click_base: Option<u64> = None;
     let mut last_copy_poll = Instant::now();
+    // What both streams held when the button went down. A click confirms, and
+    // only a change since *this press* is a selection: the older baselines
+    // predate the press, so anything an app published after our arm would
+    // otherwise look like a fresh selection and turn every confirm into a drag —
+    // PRIMARY included, which is what a browser's selection had already put
+    // there before the click.
+    let mut press_clip: Option<u64> = None;
+    let mut press_primary: Option<u64> = None;
 
     runtime::set_state(if enabled { "idle" } else { "off" });
 
@@ -473,8 +523,8 @@ fn run() -> Result<()> {
                     && matches!(input, drag::Input::Click(_))
                     && release_left_a_selection(
                         &*clip,
-                        primary_before,
-                        clip_before,
+                        press_primary.take().or(primary_before),
+                        press_clip.take().or(clip_before),
                         owned_hash,
                     );
                 if let drag::Input::Click(travel) = input {
@@ -486,10 +536,22 @@ fn run() -> Result<()> {
                 }
                 match input {
                 drag::Input::Press if enabled => {
-                    // Nothing to do. The "what did we have before the drag"
-                    // baseline is whatever the last drag left behind, so taking
-                    // it here would just read back our own last copy — and it
-                    // costs a clipboard transfer on every click on the desktop.
+                    // Nothing to do for the drag baselines: the "what did we have
+                    // before the drag" value is whatever the last drag left
+                    // behind, and reading it here would just read back our own
+                    // last copy on every click on the desktop.
+                    //
+                    // While armed it is worth one transfer, because it answers a
+                    // narrower question: did anything reach the clipboard after
+                    // this press? That is the difference between a short drag
+                    // that selected text and a click that is confirming.
+                    if router.is_armed() {
+                        press_clip = clip.clipboard().ok().flatten().map(|t| hash(&t));
+                        press_primary = clip.primary().ok().flatten().map(|t| hash(&t));
+                    } else {
+                        press_clip = None;
+                        press_primary = None;
+                    }
                     continue;
                 }
                 drag::Input::Drag if enabled || short_drag => {
@@ -803,12 +865,33 @@ fn run() -> Result<()> {
                                     Some(t) if Some(hash(t)) != owned_hash
                                 );
                                 if still_foreign {
-                                    say!(
-                                        "clipboard now holds {} bytes, the arm holds {} — something else took it",
-                                        again.as_ref().map(|t| t.len()).unwrap_or(0),
-                                        owned_len.unwrap_or(0)
-                                    );
-                                    ev = Event::ClipboardMoved;
+                                    // Same gesture? Then the app we selected in
+                                    // re-published its own copy over ours, and
+                                    // the arm is still what the user highlighted:
+                                    // take the clipboard back once and stay armed.
+                                    let take_back = router
+                                        .armed_selection()
+                                        .cloned()
+                                        .filter(|_| same_gesture(owned_at.elapsed(), reasserted))
+                                        .filter(|sel| clip.set_clipboard(&sel.text).is_ok());
+                                    if let Some(sel) = take_back {
+                                        reasserted = true;
+                                        say!(
+                                            "the app re-published {} bytes of its own within the gesture — took the clipboard back, still armed on {} bytes",
+                                            again.as_ref().map(|t| t.len()).unwrap_or(0),
+                                            sel.len
+                                        );
+                                        owned_at = Instant::now();
+                                        owned_hash = Some(sel.hash);
+                                        owned_len = Some(sel.len);
+                                    } else {
+                                        say!(
+                                            "clipboard now holds {} bytes, the arm holds {} — something else took it",
+                                            again.as_ref().map(|t| t.len()).unwrap_or(0),
+                                            owned_len.unwrap_or(0)
+                                        );
+                                        ev = Event::ClipboardMoved;
+                                    }
                                 }
                             }
                         }
@@ -825,6 +908,7 @@ fn run() -> Result<()> {
             Outcome::None => {}
             Outcome::Armed => {
                 last_arm = Some(Instant::now());
+                reasserted = false;
                 if let Some(sel) = router.armed_selection() {
                     say!(
                         "armed {} bytes from {} — click where it goes",
@@ -835,11 +919,15 @@ fn run() -> Result<()> {
             }
             Outcome::Disarmed(reason) => {
                 last_arm = None;
+                reasserted = false;
                 say!("disarmed — {reason}")
             }
             Outcome::Fire => {
                 last_arm = None;
-                if let (Some(inj), Some(_sel)) = (injector.as_mut(), held.as_ref()) {
+                if let (Some(inj), Some(sel)) = (injector.as_mut(), held.as_ref()) {
+                    if !reassert_for_paste(&*clip, sel) {
+                        say!("could not put the arm back on the clipboard — pasting what is there");
+                    }
                     let chord = if cfg.paste_chord.eq_ignore_ascii_case("auto") {
                         compositor::paste_chord().to_string()
                     } else {
@@ -1046,6 +1134,55 @@ mod tests {
         ));
         // An empty clipboard is not a match either.
         assert!(must_write(Some(h), h, &Fake::new(Some("Cancel"), None)));
+    }
+
+    #[test]
+    fn a_takeover_inside_the_gesture_is_taken_back() {
+        // A TUI copies the selection it just saw land, ~300ms after the drag.
+        assert!(same_gesture(Duration::from_millis(300), false));
+    }
+
+    #[test]
+    fn a_takeover_is_not_taken_back_twice() {
+        assert!(!same_gesture(Duration::from_millis(100), true));
+    }
+
+    #[test]
+    fn a_late_takeover_is_someone_else_copying() {
+        // Past the gesture, the clipboard is being used by the user elsewhere.
+        assert!(!same_gesture(Duration::from_secs(3), false));
+    }
+
+    #[test]
+    fn a_stale_primary_does_not_turn_a_confirm_into_a_drag() {
+        // A browser had already put its selection on PRIMARY before the press,
+        // so the click did not select it — the arm-time baseline just never saw
+        // it, because the arm came from a copy click on CLIPBOARD.
+        let own = hash("the copied 15 bytes");
+        let stale = Some(hash("a page selection"));
+        let clip = Fake::new(Some("a page selection"), Some("the copied 15 bytes"));
+        assert!(!release_left_a_selection(&clip, stale, stale, Some(own)));
+    }
+
+    #[test]
+    fn a_change_after_the_press_is_still_a_selection() {
+        let clip = Fake::new(Some("newly selected"), Some("x"));
+        let before = Some(hash("what primary held at the press"));
+        assert!(release_left_a_selection(&clip, before, None, None));
+    }
+
+    #[test]
+    fn the_paste_puts_the_arm_back_on_the_clipboard() {
+        // The app re-published its own idea of the selection after our write.
+        let clip = Fake::new(None, Some("something the app wrote"));
+        let sel = core::Selection {
+            hash: hash("Cancel"),
+            len: 6,
+            source_app: None,
+            text: "Cancel".to_string(),
+        };
+        assert!(reassert_for_paste(&clip, &sel));
+        assert_eq!(clip.clipboard.borrow().as_deref(), Some("Cancel"));
     }
 
     #[test]
