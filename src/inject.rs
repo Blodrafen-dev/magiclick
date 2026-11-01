@@ -1,7 +1,7 @@
 //! Keystroke injection via /dev/uinput — no ydotool, no daemon, no root.
 //! Works under X11 and Wayland alike because it enters below the compositor.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use evdev::uinput::VirtualDevice;
 use evdev::{AttributeSet, EventType, InputEvent, KeyCode};
 use std::time::Duration;
@@ -106,12 +106,4 @@ pub fn available() -> bool {
             .write(true)
             .open("/dev/uinput")
             .is_ok()
-}
-
-#[allow(dead_code)]
-pub fn require() -> Result<()> {
-    if !std::path::Path::new("/dev/uinput").exists() {
-        bail!("/dev/uinput missing — load the uinput module");
-    }
-    Ok(())
 }

@@ -16,8 +16,6 @@ pub enum Verdict {
 pub struct Report {
     pub session: String,
     pub clipboard_tools: Vec<&'static str>,
-    #[allow(dead_code)]
-    pub clipboard_tool_ok: bool,
     pub primary_works: bool,
     pub injector_ok: bool,
     pub input_group: bool,
@@ -41,7 +39,8 @@ fn proc_count(pattern: &str) -> usize {
         .unwrap_or(0)
 }
 
-fn which(bin: &str) -> bool {    Command::new("sh")
+fn which(bin: &str) -> bool {
+    Command::new("sh")
         .arg("-c")
         .arg(format!("command -v {bin} >/dev/null 2>&1"))
         .status()
@@ -111,13 +110,19 @@ pub fn report() -> Result<Report> {
 
     let mut notes = Vec::new();
     if !input_group {
-        notes.push(String::from("not in the `input` group — drag detection will fail (sudo usermod -aG input $USER)"));
+        notes.push(String::from(
+            "not in the `input` group — drag detection will fail (sudo usermod -aG input $USER)",
+        ));
     }
     if !injector_ok {
-        notes.push(String::from("/dev/uinput not writable — paste router unavailable, copy-on-drag still works"));
+        notes.push(String::from(
+            "/dev/uinput not writable — paste router unavailable, copy-on-drag still works",
+        ));
     }
     if !tool_ok {
-        notes.push(String::from("clipboard tool missing — install wl-clipboard (Wayland) or xclip (X11)"));
+        notes.push(String::from(
+            "clipboard tool missing — install wl-clipboard (Wayland) or xclip (X11)",
+        ));
     }
     if pointer_devices == 0 {
         notes.push(String::from("no pointing device found"));
@@ -125,11 +130,10 @@ pub fn report() -> Result<Report> {
     // Compositor adapter: without one, the daemon cannot tell "clicked a text
     // field" from "clicked the bar", and cannot wait for the click to focus a
     // window before typing into it. Both are silent mis-pastes, so say so.
-    match crate::compositor::click_target() {
-        crate::compositor::Target::Unknown => notes.push(String::from(
+    if crate::compositor::click_target() == crate::compositor::Target::Unknown {
+        notes.push(String::from(
             "no compositor adapter (Hyprland only today) — a click on the bar will paste, and a paste can land in the previously focused window",
-        )),
-        _ => {}
+        ));
     }
     // Competing selection watchers. Two things writing the clipboard from the
     // selection is how auto-copy tools double-fire and paste each other's text.
@@ -170,7 +174,6 @@ pub fn report() -> Result<Report> {
     Ok(Report {
         session,
         clipboard_tools: tools,
-        clipboard_tool_ok: tool_ok,
         primary_works,
         injector_ok,
         input_group,

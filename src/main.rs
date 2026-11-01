@@ -4,13 +4,13 @@ mod config;
 mod core;
 mod doctor;
 mod drag;
-mod runtime;
 mod inject;
+mod runtime;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use clipboard::Clipboard;
-use config::{ArmOnCopy, ConfirmAction, Config};
+use config::{ArmOnCopy, Config, ConfirmAction};
 use core::{Event, Outcome, Router, Selection};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -19,7 +19,11 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 #[derive(Parser)]
-#[command(name = "magiclick", version, about = "Auto-copy a selection, confirm to paste.")]
+#[command(
+    name = "magiclick",
+    version,
+    about = "Auto-copy a selection, confirm to paste."
+)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Cmd>,
@@ -222,7 +226,11 @@ fn looks_like_same_selection(foreign: &str, armed: &str) -> bool {
     if f == a {
         return true;
     }
-    let (short, long) = if a.len() <= f.len() { (&a, &f) } else { (&f, &a) };
+    let (short, long) = if a.len() <= f.len() {
+        (&a, &f)
+    } else {
+        (&f, &a)
+    };
     short.chars().count() >= 8 && long.contains(short.as_str())
 }
 
@@ -275,15 +283,17 @@ fn release_left_a_selection(
         let h = hash(t);
         Some(h) != base && Some(h) != owned
     };
-    if let Ok(Some(t)) = clip.primary() {
-        if !t.is_empty() && fresh(&t, primary_base) {
-            return true;
-        }
+    if let Ok(Some(t)) = clip.primary()
+        && !t.is_empty()
+        && fresh(&t, primary_base)
+    {
+        return true;
     }
-    if let Ok(Some(t)) = clip.clipboard() {
-        if !t.is_empty() && fresh(&t, clip_base) {
-            return true;
-        }
+    if let Ok(Some(t)) = clip.clipboard()
+        && !t.is_empty()
+        && fresh(&t, clip_base)
+    {
+        return true;
     }
     false
 }
@@ -591,95 +601,96 @@ fn run() -> Result<()> {
                         press_clip.take().or(clip_before),
                         owned_hash,
                     );
-                if let drag::Input::Click(travel) = input {
-                    if short_drag {
-                        say!(
-                            "click with {travel} units of travel left a new selection — treated as a drag, not a confirm"
-                        );
-                    }
+                if let drag::Input::Click(travel) = input
+                    && short_drag
+                {
+                    say!(
+                        "click with {travel} units of travel left a new selection — treated as a drag, not a confirm"
+                    );
                 }
                 match input {
-                drag::Input::Press if enabled => {
-                    // Nothing to do for the drag baselines: the "what did we have
-                    // before the drag" value is whatever the last drag left
-                    // behind, and reading it here would just read back our own
-                    // last copy on every click on the desktop.
-                    //
-                    // While armed it is worth one transfer, because it answers a
-                    // narrower question: did anything reach the clipboard after
-                    // this press? That is the difference between a short drag
-                    // that selected text and a click that is confirming.
-                    if router.is_armed() {
-                        press_clip = clip.clipboard().ok().flatten().map(|t| hash(&t));
-                        press_primary = clip.primary().ok().flatten().map(|t| hash(&t));
-                    } else {
-                        press_clip = None;
-                        press_primary = None;
-                    }
-                    continue;
-                }
-                drag::Input::Drag if enabled || short_drag => {
-                    // A drag is selecting, not clicking a copy control. Close any
-                    // window a previous click opened so the two paths cannot both
-                    // claim the same copy.
-                    //
-                    // A new drag is a new gesture, so it earns a fresh adoption.
-                    copy_click = None;
-                    adopted = false;
-                    // The new selection is published some time after the button
-                    // comes up. Ask the primary selection first — that is what a
-                    // drag in a browser or a terminal actually sets — and only
-                    // look at CLIPBOARD if primary never moved.
-                    //
-                    // Short and sparse on purpose: every read makes the focused
-                    // app serve a clipboard transfer on its own event loop, and
-                    // Chromium does it on its UI thread. Reading both streams
-                    // sixteen times a second is what made the page stutter in
-                    // the middle of a selection.
-                    let started = Instant::now();
-                    let primary_deadline = started + Duration::from_millis(250);
-                    let clipboard_deadline = started + Duration::from_millis(440);
-                    let mut picked: Option<(String, &'static str)> = None;
-                    let mut last_p: Option<(usize, u64)> = None;
-                    let mut last_p_text: Option<String> = None;
-                    let mut last_c: Option<(usize, u64)> = None;
-
-                    // Phase 1 — PRIMARY, and only if it actually moved.
-                    //
-                    // This loop used to also break when PRIMARY still held text
-                    // we already carry, on the theory that re-selecting the same
-                    // words is a new intent. That rule is only safe when nothing
-                    // else is talking. A terminal that does its own selection
-                    // freezes PRIMARY at whatever it held while the app publishes
-                    // the real selection to CLIPBOARD, so the rule re-armed the
-                    // stale text on every drag and the clipboard was then
-                    // overwritten with it: "it keeps pasting old copies".
-                    while Instant::now() < primary_deadline {
-                        std::thread::sleep(Duration::from_millis(40));
-                        let Ok(Some(t)) = clip.primary() else {
-                            continue;
-                        };
-                        if t.is_empty() {
-                            continue;
+                    drag::Input::Press if enabled => {
+                        // Nothing to do for the drag baselines: the "what did we have
+                        // before the drag" value is whatever the last drag left
+                        // behind, and reading it here would just read back our own
+                        // last copy on every click on the desktop.
+                        //
+                        // While armed it is worth one transfer, because it answers a
+                        // narrower question: did anything reach the clipboard after
+                        // this press? That is the difference between a short drag
+                        // that selected text and a click that is confirming.
+                        if router.is_armed() {
+                            press_clip = clip.clipboard().ok().flatten().map(|t| hash(&t));
+                            press_primary = clip.primary().ok().flatten().map(|t| hash(&t));
+                        } else {
+                            press_clip = None;
+                            press_primary = None;
                         }
-                        let h = hash(&t);
-                        last_p = Some((t.len(), h));
-                        if primary_moved(h, primary_before) {
-                            picked = Some((t, "primary"));
-                            break;
-                        }
-                        last_p_text = Some(t);
+                        continue;
                     }
+                    drag::Input::Drag if enabled || short_drag => {
+                        // A drag is selecting, not clicking a copy control. Close any
+                        // window a previous click opened so the two paths cannot both
+                        // claim the same copy.
+                        //
+                        // A new drag is a new gesture, so it earns a fresh adoption.
+                        copy_click = None;
+                        adopted = false;
+                        // The new selection is published some time after the button
+                        // comes up. Ask the primary selection first — that is what a
+                        // drag in a browser or a terminal actually sets — and only
+                        // look at CLIPBOARD if primary never moved.
+                        //
+                        // Short and sparse on purpose: every read makes the focused
+                        // app serve a clipboard transfer on its own event loop, and
+                        // Chromium does it on its UI thread. Reading both streams
+                        // sixteen times a second is what made the page stutter in
+                        // the middle of a selection.
+                        let started = Instant::now();
+                        let primary_deadline = started + Duration::from_millis(250);
+                        let clipboard_deadline = started + Duration::from_millis(440);
+                        let mut picked: Option<(String, &'static str)> = None;
+                        let mut last_p: Option<(usize, u64)> = None;
+                        let mut last_p_text: Option<String> = None;
+                        let mut last_c: Option<(usize, u64)> = None;
 
-                    // Phase 2 — CLIPBOARD, and before the re-selection rule.
-                    //
-                    // A stream that moved is better evidence than a stream that
-                    // is holding still, so this is asked first. Only reached when
-                    // PRIMARY had nothing new to say.
-                    if picked.is_none() {
-                        while Instant::now() < clipboard_deadline {
-                            if let Ok(Some(t)) = clip.clipboard() {
-                                if !t.is_empty() {
+                        // Phase 1 — PRIMARY, and only if it actually moved.
+                        //
+                        // This loop used to also break when PRIMARY still held text
+                        // we already carry, on the theory that re-selecting the same
+                        // words is a new intent. That rule is only safe when nothing
+                        // else is talking. A terminal that does its own selection
+                        // freezes PRIMARY at whatever it held while the app publishes
+                        // the real selection to CLIPBOARD, so the rule re-armed the
+                        // stale text on every drag and the clipboard was then
+                        // overwritten with it: "it keeps pasting old copies".
+                        while Instant::now() < primary_deadline {
+                            std::thread::sleep(Duration::from_millis(40));
+                            let Ok(Some(t)) = clip.primary() else {
+                                continue;
+                            };
+                            if t.is_empty() {
+                                continue;
+                            }
+                            let h = hash(&t);
+                            last_p = Some((t.len(), h));
+                            if primary_moved(h, primary_before) {
+                                picked = Some((t, "primary"));
+                                break;
+                            }
+                            last_p_text = Some(t);
+                        }
+
+                        // Phase 2 — CLIPBOARD, and before the re-selection rule.
+                        //
+                        // A stream that moved is better evidence than a stream that
+                        // is holding still, so this is asked first. Only reached when
+                        // PRIMARY had nothing new to say.
+                        if picked.is_none() {
+                            while Instant::now() < clipboard_deadline {
+                                if let Ok(Some(t)) = clip.clipboard()
+                                    && !t.is_empty()
+                                {
                                     let h = hash(&t);
                                     last_c = Some((t.len(), h));
                                     if clipboard_is_news(h, clip_before, owned_hash) {
@@ -687,123 +698,164 @@ fn run() -> Result<()> {
                                         break;
                                     }
                                 }
+                                std::thread::sleep(Duration::from_millis(40));
                             }
-                            std::thread::sleep(Duration::from_millis(40));
                         }
-                    }
 
-                    // Phase 3 — nothing moved anywhere, so the re-selection rule
-                    // is admissible: PRIMARY holding the text we already carry is
-                    // the only evidence there is, and nothing contradicted it.
-                    if picked.is_none() {
-                        if let Some(text) = last_p_text {
-                            if is_new_selection(hash(&text), primary_before, owned_hash, true) {
-                                picked = Some((text, "primary"));
+                        // Phase 3 — nothing moved anywhere, so the re-selection rule
+                        // is admissible: PRIMARY holding the text we already carry is
+                        // the only evidence there is, and nothing contradicted it.
+                        if picked.is_none()
+                            && let Some(text) = last_p_text
+                            && is_new_selection(hash(&text), primary_before, owned_hash, true)
+                        {
+                            picked = Some((text, "primary"));
+                        }
+                        match picked {
+                            None => {
+                                // Nothing new: rebase anyway. While armed the live
+                                // selection *is* the armed text, and a frozen
+                                // baseline made every later drag look "unchanged",
+                                // so the arm could never be replaced — only fired.
+                                if let Some((_, h)) = last_p {
+                                    primary_before = Some(h);
+                                }
+                                if let Some((_, h)) = last_c {
+                                    clip_before = Some(h);
+                                }
+                                say!(
+                                    "a selection in {} did not change ({} already selected, {}) — nothing copied",
+                                    source_app().unwrap_or_else(|| "?".into()),
+                                    match last_p {
+                                        Some((n, _)) => format!("{n} bytes"),
+                                        None => "nothing".into(),
+                                    },
+                                    match last_c {
+                                        Some((n, _)) => format!("{n} bytes on the clipboard"),
+                                        None => "clipboard empty".into(),
+                                    }
+                                );
+                                continue;
+                            }
+                            Some((text, from)) => {
+                                // `wl-copy -n` cannot remove a newline the selection
+                                // already carries, so a line selection pasted a blank
+                                // line after itself. Strip exactly one line ending.
+                                let text = core::trim_selection(&text).to_string();
+                                if text.is_empty() {
+                                    continue;
+                                }
+                                if text.len() > cfg.max_bytes {
+                                    say!(
+                                        "selection too big ({} bytes, limit {}) — ignored",
+                                        text.len(),
+                                        cfg.max_bytes
+                                    );
+                                    continue;
+                                }
+                                let h = hash(&text);
+                                // Re-selecting text we already carry is a real
+                                // drag — the router decides whether it is news (it
+                                // is, once nothing is armed). The clipboard write is
+                                // skipped only if the clipboard still holds it: the
+                                // hash alone goes stale, and skipping then leaves a
+                                // foreign value under an arm that claims to own it.
+                                if cfg.copy_on_drag
+                                    && must_write(owned_hash, h, clip.as_ref())
+                                    && let Err(e) = clip.set_clipboard(&text)
+                                {
+                                    say!("clipboard write failed: {e}");
+                                }
+                                owned_hash = Some(h);
+                                owned_at = Instant::now();
+                                owned_len = Some(text.len());
+                                // Rebase the baselines to the live state: our own
+                                // clipboard write must never look like a new drag,
+                                // and the source we took the text from now holds it.
+                                if from == "primary" {
+                                    primary_before = Some(h);
+                                }
+                                if from == "clipboard" || cfg.copy_on_drag {
+                                    clip_before = Some(h);
+                                }
+                                let app = source_app();
+                                say!(
+                                    "copied {} bytes from {from} in {}",
+                                    text.len(),
+                                    app.as_deref().unwrap_or("?")
+                                );
+                                Event::DragCopied(Selection {
+                                    hash: h,
+                                    len: text.len(),
+                                    source_app: app,
+                                    text,
+                                })
                             }
                         }
                     }
-                    match picked {
-                        None => {
-                            // Nothing new: rebase anyway. While armed the live
-                            // selection *is* the armed text, and a frozen
-                            // baseline made every later drag look "unchanged",
-                            // so the arm could never be replaced — only fired.
-                            if let Some((_, h)) = last_p {
-                                primary_before = Some(h);
-                            }
-                            if let Some((_, h)) = last_c {
-                                clip_before = Some(h);
-                            }
-                            say!(
-                                "a selection in {} did not change ({} already selected, {}) — nothing copied",
-                                source_app().unwrap_or_else(|| "?".into()),
-                                match last_p {
-                                    Some((n, _)) => format!("{n} bytes"),
-                                    None => "nothing".into(),
-                                },
-                                match last_c {
-                                    Some((n, _)) => format!("{n} bytes on the clipboard"),
-                                    None => "clipboard empty".into(),
+                    drag::Input::Click(_) if enabled && !short_drag => {
+                        // Diagnosis: a click that lands after the arm expired looks
+                        // identical to "nothing happened" from the outside. Say so.
+                        if !router.is_armed() {
+                            if let Some(t) = last_arm {
+                                let age = t.elapsed();
+                                if age < Duration::from_secs(60) {
+                                    say!(
+                                        "a click landed {:.1}s after the arming, past the {}s window — nothing pasted",
+                                        age.as_secs_f64(),
+                                        timeout_ms as f64 / 1000.0
+                                    );
                                 }
+                            }
+                            // Nothing armed, so this click is free to become an arm:
+                            // copy glyphs, "Copy link address" and every other
+                            // "this click copied something" case begin here.
+                            //
+                            // The baseline is sampled now rather than trusted from
+                            // the last drag. A Ctrl+C since then would otherwise look
+                            // like a copy this click caused.
+                            if cfg.arm_on_copy == ArmOnCopy::Click {
+                                copy_click = Some(Instant::now());
+                                let base = clip.clipboard().ok().flatten().map(|t| hash(&t));
+                                copy_click_base = base;
+                                clip_before = base;
+                                last_copy_poll = Instant::now();
+                            }
+                            continue;
+                        }
+                        // Bar, desktop, layer surface: never a text field, and always
+                        // a navigation gesture — "which desktop / which window".
+                        // Stay armed and say nothing: pasting here is what erased a
+                        // prompt, and disarming here would kill the very flow the
+                        // user is performing (select -> switch desktop -> click).
+                        if router.is_armed()
+                            && compositor::click_target() == compositor::Target::NoWindow
+                        {
+                            say!("click landed on the bar or desktop — kept armed, nothing pasted");
+                            continue;
+                        }
+                        // The click must actually focus what was clicked before any
+                        // key goes out, or the chord lands in the window that was
+                        // focused a moment ago (browser click, terminal paste).
+                        if router.is_armed()
+                            && !compositor::wait_for_focus(Duration::from_millis(400))
+                        {
+                            say!(
+                                "the clicked window never took focus — kept armed, click inside it"
                             );
                             continue;
                         }
-                        Some((text, from)) => {
-                            // `wl-copy -n` cannot remove a newline the selection
-                            // already carries, so a line selection pasted a blank
-                            // line after itself. Strip exactly one line ending.
-                            let text = core::trim_selection(&text).to_string();
-                            if text.is_empty() {
-                                continue;
-                            }
-                            if text.len() > cfg.max_bytes {
-                                say!(
-                                    "selection too big ({} bytes, limit {}) — ignored",
-                                    text.len(),
-                                    cfg.max_bytes
-                                );
-                                continue;
-                            }
-                            let h = hash(&text);
-                            // Re-selecting text we already carry is a real
-                            // drag — the router decides whether it is news (it
-                            // is, once nothing is armed). The clipboard write is
-                            // skipped only if the clipboard still holds it: the
-                            // hash alone goes stale, and skipping then leaves a
-                            // foreign value under an arm that claims to own it.
-                            if cfg.copy_on_drag && must_write(owned_hash, h, clip.as_ref()) {
-                                if let Err(e) = clip.set_clipboard(&text) {
-                                    say!("clipboard write failed: {e}");
-                                }
-                            }
-                            owned_hash = Some(h);
-                            owned_at = Instant::now();
-                            owned_len = Some(text.len());
-                            // Rebase the baselines to the live state: our own
-                            // clipboard write must never look like a new drag,
-                            // and the source we took the text from now holds it.
-                            if from == "primary" {
-                                primary_before = Some(h);
-                            }
-                            if from == "clipboard" || cfg.copy_on_drag {
-                                clip_before = Some(h);
-                            }
-                            let app = source_app();
-                            say!(
-                                "copied {} bytes from {from} in {}",
-                                text.len(),
-                                app.as_deref().unwrap_or("?")
-                            );
-                            Event::DragCopied(Selection {
-                                hash: h,
-                                len: text.len(),
-                                source_app: app,
-                                text,
-                            })
-                        }
+                        Event::Click
                     }
-                }
-                drag::Input::Click(_) if enabled && !short_drag => {
-                    // Diagnosis: a click that lands after the arm expired looks
-                    // identical to "nothing happened" from the outside. Say so.
-                    if !router.is_armed() {
-                        if let Some(t) = last_arm {
-                            let age = t.elapsed();
-                            if age < Duration::from_secs(60) {
-                                say!(
-                                    "a click landed {:.1}s after the arming, past the {}s window — nothing pasted",
-                                    age.as_secs_f64(),
-                                    timeout_ms as f64 / 1000.0
-                                );
-                            }
-                        }
-                        // Nothing armed, so this click is free to become an arm:
-                        // copy glyphs, "Copy link address" and every other
-                        // "this click copied something" case begin here.
-                        //
-                        // The baseline is sampled now rather than trusted from
-                        // the last drag. A Ctrl+C since then would otherwise look
-                        // like a copy this click caused.
+                    drag::Input::Confirm if enabled => {
+                        copy_click = None;
+                        Event::Confirm
+                    }
+                    drag::Input::Cancel if enabled => {
+                        // Right-click is how "Copy link address" starts: the menu
+                        // item that does the copying is a click or two away. Disarm
+                        // as always, and open the same window for the copy that the
+                        // menu is about to make.
                         if cfg.arm_on_copy == ArmOnCopy::Click {
                             copy_click = Some(Instant::now());
                             let base = clip.clipboard().ok().flatten().map(|t| hash(&t));
@@ -811,55 +863,15 @@ fn run() -> Result<()> {
                             clip_before = base;
                             last_copy_poll = Instant::now();
                         }
-                        continue;
+                        Event::Interference("right-clicked")
                     }
-                    // Bar, desktop, layer surface: never a text field, and always
-                    // a navigation gesture — "which desktop / which window".
-                    // Stay armed and say nothing: pasting here is what erased a
-                    // prompt, and disarming here would kill the very flow the
-                    // user is performing (select -> switch desktop -> click).
-                    if router.is_armed()
-                        && compositor::click_target() == compositor::Target::NoWindow
-                    {
-                        say!("click landed on the bar or desktop — kept armed, nothing pasted");
-                        continue;
+                    drag::Input::KeyCode if enabled => {
+                        // Typing means the click window is over: nothing about a
+                        // keystroke suggests a copy glyph was pressed.
+                        copy_click = None;
+                        Event::Interference("typed")
                     }
-                    // The click must actually focus what was clicked before any
-                    // key goes out, or the chord lands in the window that was
-                    // focused a moment ago (browser click, terminal paste).
-                    if router.is_armed()
-                        && !compositor::wait_for_focus(Duration::from_millis(400))
-                    {
-                        say!("the clicked window never took focus — kept armed, click inside it");
-                        continue;
-                    }
-                    Event::Click
-                }
-                drag::Input::Confirm if enabled => {
-                    copy_click = None;
-                    Event::Confirm
-                }
-                drag::Input::Cancel if enabled => {
-                    // Right-click is how "Copy link address" starts: the menu
-                    // item that does the copying is a click or two away. Disarm
-                    // as always, and open the same window for the copy that the
-                    // menu is about to make.
-                    if cfg.arm_on_copy == ArmOnCopy::Click {
-                        copy_click = Some(Instant::now());
-                        let base = clip.clipboard().ok().flatten().map(|t| hash(&t));
-                        copy_click_base = base;
-                        clip_before = base;
-                        last_copy_poll = Instant::now();
-                    }
-                    Event::Interference("right-clicked")
-                }
-                drag::Input::KeyCode if enabled => {
-                    // Typing means the click window is over: nothing about a
-                    // keystroke suggests a copy glyph was pressed.
-                    copy_click = None;
-                    Event::Interference("typed")
-                }
-                _ => continue,
+                    _ => continue,
                 }
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
@@ -876,12 +888,9 @@ fn run() -> Result<()> {
                         copy_click = None;
                     } else if last_copy_poll.elapsed() >= Duration::from_millis(50) {
                         last_copy_poll = now;
-                        if let Some((text, from)) = copy_since_click(
-                            &*clip,
-                            copy_click_base,
-                            primary_before,
-                            owned_hash,
-                        ) {
+                        if let Some((text, from)) =
+                            copy_since_click(&*clip, copy_click_base, primary_before, owned_hash)
+                        {
                             copy_click = None;
                             // Same normalisation as a drag: `wl-copy -n` cannot
                             // remove a newline the copy already carried.
@@ -899,10 +908,10 @@ fn run() -> Result<()> {
                                     // re-write it: the paste injects ctrl+v and
                                     // pastes the clipboard, not our copy of the
                                     // text, so the two must be the same bytes.
-                                    if owned_hash != Some(h) {
-                                        if let Err(e) = clip.set_clipboard(&text) {
-                                            say!("clipboard write failed: {e}");
-                                        }
+                                    if owned_hash != Some(h)
+                                        && let Err(e) = clip.set_clipboard(&text)
+                                    {
+                                        say!("clipboard write failed: {e}");
                                     }
                                     owned_hash = Some(h);
                                     owned_at = Instant::now();
@@ -948,101 +957,103 @@ fn run() -> Result<()> {
                         && owned_at.elapsed() > Duration::from_millis(300)
                     {
                         last_clipboard_check = Instant::now();
-                        if let Ok(Some(current)) = clip.clipboard() {
-                            if Some(hash(&current)) != owned_hash {
-                                // Confirm before acting. Confirming costs 250ms
-                                // and removes the entire false-disarm class.
-                                std::thread::sleep(Duration::from_millis(250));
-                                let again = clip.clipboard().ok().flatten();
-                                let still_foreign = matches!(
-                                    again.as_ref(),
-                                    Some(t) if Some(hash(t)) != owned_hash
-                                );
-                                if still_foreign {
-                                    // Two different things can land here, and
-                                    // they need opposite answers:
-                                    //
-                                    //  * the app we selected in re-publishing the
-                                    //    selection we already carry, at a
-                                    //    different extent — ours is the precise
-                                    //    one, so take the clipboard back once;
-                                    //  * the app publishing a *new* selection —
-                                    //    taking the clipboard back then throws
-                                    //    away the thing the user just selected
-                                    //    and pastes the previous arm instead,
-                                    //    which is the stale-paste bug in the
-                                    //    field. The newer text wins.
-                                    let foreign = again.unwrap_or_default();
-                                    let armed = router.armed_selection().cloned();
-                                    let in_gesture = same_gesture(owned_at.elapsed(), reasserted);
-                                    let same_text = armed.as_ref().is_some_and(|sel| {
-                                        in_gesture && looks_like_same_selection(&foreign, &sel.text)
-                                    });
-                                    if same_text {
-                                        let sel = armed.expect("same_text implies an arm");
-                                        if clip.set_clipboard(&sel.text).is_ok() {
-                                            reasserted = true;
-                                            say!(
-                                                "the app re-published the same selection as {} bytes within the gesture — took the clipboard back, still armed on {} bytes",
-                                                foreign.len(),
-                                                sel.len
-                                            );
-                                            owned_at = Instant::now();
-                                            owned_hash = Some(sel.hash);
-                                            owned_len = Some(sel.len);
-                                        } else {
-                                            say!("clipboard write failed — the arm cannot be pasted now");
-                                            ev = Event::ClipboardMoved;
-                                        }
-                                    } else if in_gesture
-                                        && !adopted
-                                        && !foreign.is_empty()
-                                        && foreign.len() <= cfg.max_bytes
-                                    {
-                                        let text = core::trim_selection(&foreign).to_string();
-                                        if !text.is_empty() {
-                                            let h = hash(&text);
-                                            if let Err(e) = clip.set_clipboard(&text) {
-                                                say!("clipboard write failed: {e}");
-                                            }
-                                            adopted = true;
-                                            owned_hash = Some(h);
-                                            owned_at = Instant::now();
-                                            owned_len = Some(text.len());
-                                            clip_before = Some(h);
-                                            let app = source_app();
-                                            say!(
-                                                "the clipboard changed to different text ({} bytes) within the gesture — carrying that instead of the {} bytes armed",
-                                                text.len(),
-                                                armed.as_ref().map(|s| s.len).unwrap_or(0)
-                                            );
-                                            ev = Event::DragCopied(Selection {
-                                                hash: h,
-                                                len: text.len(),
-                                                source_app: app,
-                                                text,
-                                            });
-                                        }
+                        if let Ok(Some(current)) = clip.clipboard()
+                            && Some(hash(&current)) != owned_hash
+                        {
+                            // Confirm before acting. Confirming costs 250ms
+                            // and removes the entire false-disarm class.
+                            std::thread::sleep(Duration::from_millis(250));
+                            let again = clip.clipboard().ok().flatten();
+                            let still_foreign = matches!(
+                                again.as_ref(),
+                                Some(t) if Some(hash(t)) != owned_hash
+                            );
+                            if still_foreign {
+                                // Two different things can land here, and
+                                // they need opposite answers:
+                                //
+                                //  * the app we selected in re-publishing the
+                                //    selection we already carry, at a
+                                //    different extent — ours is the precise
+                                //    one, so take the clipboard back once;
+                                //  * the app publishing a *new* selection —
+                                //    taking the clipboard back then throws
+                                //    away the thing the user just selected
+                                //    and pastes the previous arm instead,
+                                //    which is the stale-paste bug in the
+                                //    field. The newer text wins.
+                                let foreign = again.unwrap_or_default();
+                                let armed = router.armed_selection().cloned();
+                                let in_gesture = same_gesture(owned_at.elapsed(), reasserted);
+                                let same_text = armed.as_ref().is_some_and(|sel| {
+                                    in_gesture && looks_like_same_selection(&foreign, &sel.text)
+                                });
+                                if same_text {
+                                    let sel = armed.expect("same_text implies an arm");
+                                    if clip.set_clipboard(&sel.text).is_ok() {
+                                        reasserted = true;
+                                        say!(
+                                            "the app re-published the same selection as {} bytes within the gesture — took the clipboard back, still armed on {} bytes",
+                                            foreign.len(),
+                                            sel.len
+                                        );
+                                        owned_at = Instant::now();
+                                        owned_hash = Some(sel.hash);
+                                        owned_len = Some(sel.len);
                                     } else {
-                                        // Our own write may not be visible immediately: wl-copy
-                                        // forks, and the child takes ownership a few ms later.
-                                        // Skip the disarming test while our write is settling.
-                                        if owned_at.elapsed() <= Duration::from_millis(300) {
-                                            continue;
+                                        say!(
+                                            "clipboard write failed — the arm cannot be pasted now"
+                                        );
+                                        ev = Event::ClipboardMoved;
+                                    }
+                                } else if in_gesture
+                                    && !adopted
+                                    && !foreign.is_empty()
+                                    && foreign.len() <= cfg.max_bytes
+                                {
+                                    let text = core::trim_selection(&foreign).to_string();
+                                    if !text.is_empty() {
+                                        let h = hash(&text);
+                                        if let Err(e) = clip.set_clipboard(&text) {
+                                            say!("clipboard write failed: {e}");
                                         }
-                                        // A single bad read is not a takeover. A real foreign copy
-                                        // still holds after 250ms; a race does not.
-                                        std::thread::sleep(Duration::from_millis(250));
-                                        let again = clip.clipboard().ok().flatten();
-                                        let still_foreign = matches!(again.as_ref(), Some(t) if Some(hash(t)) != owned_hash);
-                                        if still_foreign {
-                                            say!(
-                                                "clipboard now holds {} bytes, the arm holds {} — something else took it",
-                                                again.as_ref().map(|t| t.len()).unwrap_or(0),
-                                                owned_len.unwrap_or(0)
-                                            );
-                                            ev = Event::ClipboardMoved;
-                                        }
+                                        adopted = true;
+                                        owned_hash = Some(h);
+                                        owned_at = Instant::now();
+                                        owned_len = Some(text.len());
+                                        clip_before = Some(h);
+                                        let app = source_app();
+                                        say!(
+                                            "the clipboard changed to different text ({} bytes) within the gesture — carrying that instead of the {} bytes armed",
+                                            text.len(),
+                                            armed.as_ref().map(|s| s.len).unwrap_or(0)
+                                        );
+                                        ev = Event::DragCopied(Selection {
+                                            hash: h,
+                                            len: text.len(),
+                                            source_app: app,
+                                            text,
+                                        });
+                                    }
+                                } else {
+                                    // Our own write may not be visible immediately: wl-copy
+                                    // forks, and the child takes ownership a few ms later.
+                                    // Skip the disarming test while our write is settling.
+                                    if owned_at.elapsed() <= Duration::from_millis(300) {
+                                        continue;
+                                    }
+                                    // A single bad read is not a takeover. A real foreign copy
+                                    // still holds after 250ms; a race does not.
+                                    std::thread::sleep(Duration::from_millis(250));
+                                    let again = clip.clipboard().ok().flatten();
+                                    let still_foreign = matches!(again.as_ref(), Some(t) if Some(hash(t)) != owned_hash);
+                                    if still_foreign {
+                                        say!(
+                                            "clipboard now holds {} bytes, the arm holds {} — something else took it",
+                                            again.as_ref().map(|t| t.len()).unwrap_or(0),
+                                            owned_len.unwrap_or(0)
+                                        );
+                                        ev = Event::ClipboardMoved;
                                     }
                                 }
                             }
@@ -1156,9 +1167,11 @@ fn watch() -> Result<()> {
         if name.contains("magiclick") {
             continue;
         }
-        let Some(keys) = dev.supported_keys() else { continue };
-        let interesting = keys.contains(evdev::KeyCode::BTN_LEFT)
-            || keys.contains(evdev::KeyCode::KEY_A);
+        let Some(keys) = dev.supported_keys() else {
+            continue;
+        };
+        let interesting =
+            keys.contains(evdev::KeyCode::BTN_LEFT) || keys.contains(evdev::KeyCode::KEY_A);
         if !interesting {
             continue;
         }
@@ -1167,7 +1180,9 @@ fn watch() -> Result<()> {
         std::thread::spawn(move || {
             let _ = &path;
             loop {
-                let Ok(events) = dev.fetch_events() else { return };
+                let Ok(events) = dev.fetch_events() else {
+                    return;
+                };
                 for ev in events {
                     if ev.event_type() == evdev::EventType::KEY && ev.value() == 1 {
                         let code = ev.code();
@@ -1181,11 +1196,28 @@ fn watch() -> Result<()> {
     if seen == 0 {
         anyhow::bail!("no devices readable — run `magiclick doctor`");
     }
-    eprintln!("magiclick: watching {} device(s). Press the button, then Ctrl-C.", seen);
+    eprintln!(
+        "magiclick: watching {} device(s). Press the button, then Ctrl-C.",
+        seen
+    );
     for line in rx {
         println!("{line}");
     }
     Ok(())
+}
+
+fn confirm_key_code(name: &str) -> Result<u16> {
+    use evdev::KeyCode;
+    let k = match name {
+        "KEY_F13" => KeyCode::KEY_F13,
+        "KEY_F14" => KeyCode::KEY_F14,
+        "KEY_F15" => KeyCode::KEY_F15,
+        "KEY_F16" => KeyCode::KEY_F16,
+        "KEY_PAUSE" => KeyCode::KEY_PAUSE,
+        "KEY_SCROLLLOCK" => KeyCode::KEY_SCROLLLOCK,
+        other => anyhow::bail!("unsupported confirm_key {other}; use KEY_F13..KEY_F16"),
+    };
+    Ok(k.code())
 }
 
 #[cfg(test)]
@@ -1243,9 +1275,6 @@ mod tests {
     }
 
     impl Clipboard for Fake {
-        fn name(&self) -> &'static str {
-            "fake"
-        }
         fn primary(&self) -> Result<Option<String>> {
             Ok(self.primary.clone())
         }
@@ -1483,10 +1512,7 @@ mod tests {
         // PRIMARY cleared by the click itself: empty is not a copy, and the
         // baseline moved with it.
         let clip = Fake::new(None, Some("old"));
-        assert_eq!(
-            copy_since_click(&clip, Some(hash("old")), None, None),
-            None
-        );
+        assert_eq!(copy_since_click(&clip, Some(hash("old")), None, None), None);
         // An unchanged non-empty primary is not news either.
         let clip = Fake::new(Some("words"), Some("old"));
         assert_eq!(
@@ -1572,18 +1598,4 @@ mod tests {
         assert_eq!(Config::default().arm_on_copy, ArmOnCopy::Click);
         assert_eq!(Config::default().copy_click_window_ms, 600);
     }
-}
-
-fn confirm_key_code(name: &str) -> Result<u16> {
-    use evdev::KeyCode;
-    let k = match name {
-        "KEY_F13" => KeyCode::KEY_F13,
-        "KEY_F14" => KeyCode::KEY_F14,
-        "KEY_F15" => KeyCode::KEY_F15,
-        "KEY_F16" => KeyCode::KEY_F16,
-        "KEY_PAUSE" => KeyCode::KEY_PAUSE,
-        "KEY_SCROLLLOCK" => KeyCode::KEY_SCROLLLOCK,
-        other => anyhow::bail!("unsupported confirm_key {other}; use KEY_F13..KEY_F16"),
-    };
-    Ok(k.code())
 }

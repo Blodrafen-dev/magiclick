@@ -90,10 +90,14 @@ pub fn window_under_cursor() -> Option<String> {
             size = pair(v);
         } else if let Some(v) = t.strip_prefix("mapped:") {
             let mapped = v.trim() == "1";
-            if let (Some(a), Some(at), Some(s)) = (addr.as_ref(), at, size) {
-                if mapped && x >= at.0 && x < at.0 + s.0 && y >= at.1 && y < at.1 + s.1 {
-                    best = Some(a.clone());
-                }
+            if let (Some(a), Some(at), Some(s)) = (addr.as_ref(), at, size)
+                && mapped
+                && x >= at.0
+                && x < at.0 + s.0
+                && y >= at.1
+                && y < at.1 + s.1
+            {
+                best = Some(a.clone());
             }
         }
     }
@@ -216,7 +220,8 @@ fn json_string_array(src: &str, key: &str) -> Vec<String> {
 }
 
 pub fn click_target() -> Target {
-    let (Some((x, y)), Some(wins)) = (cursor(), windows()) else {        return Target::Unknown;
+    let (Some((x, y)), Some(wins)) = (cursor(), windows()) else {
+        return Target::Unknown;
     };
     for (wx, wy, ww, wh) in wins {
         if x >= wx && x < wx + ww && y >= wy && y < wy + wh {

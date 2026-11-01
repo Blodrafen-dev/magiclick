@@ -14,9 +14,6 @@ pub trait Clipboard {
     fn primary(&self) -> Result<Option<String>>;
     fn set_clipboard(&self, text: &str) -> Result<()>;
     fn clipboard(&self) -> Result<Option<String>>;
-    /// Backend name, shown by `doctor`.
-    #[allow(dead_code)]
-    fn name(&self) -> &'static str;
 }
 
 pub struct WlClipboard;
@@ -47,10 +44,6 @@ fn run_with_timeout(program: &str, args: &[&str], limit: Duration) -> Result<Vec
 }
 
 impl Clipboard for WlClipboard {
-    fn name(&self) -> &'static str {
-        "wl-clipboard"
-    }
-
     fn primary(&self) -> Result<Option<String>> {
         // Bounded on purpose: a wedged owner must not block the router.
         let out = run_with_timeout("wl-paste", &["--primary", "-n"], Duration::from_millis(400))?;

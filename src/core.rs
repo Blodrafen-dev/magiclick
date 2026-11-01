@@ -76,7 +76,9 @@ impl Router {
         }
     }
 
-    #[allow(dead_code)]
+    /// Only the tests need to look inside a router; production code asks
+    /// `handle` for an outcome instead.
+    #[cfg(test)]
     pub fn state(&self) -> &State {
         &self.state
     }

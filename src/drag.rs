@@ -142,10 +142,10 @@ fn scan(
             // Gone (unplugged, suspended, or the daemon is shutting down):
             // free the path and remember the inode so we do not thrash on a
             // device that is merely broken.
-            if let Ok(mut r) = reg.lock() {
-                if let Some(ino) = r.live.remove(&p) {
-                    r.dead.insert(p, ino);
-                }
+            if let Ok(mut r) = reg.lock()
+                && let Some(ino) = r.live.remove(&p)
+            {
+                r.dead.insert(p, ino);
             }
         });
     }
