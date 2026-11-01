@@ -475,13 +475,17 @@ fn run() -> Result<()> {
 
     let mut last_clipboard_check = Instant::now();
     let mut owned_hash: Option<u64> = None;
+    let mut owned_at = Instant::now();
+    let mut owned_len: Option<usize> = None;
     // When we last put text on the clipboard, and how much of it. `wl-copy`
     // forks and serves the data from the child, so between the write and the
     // child taking ownership a read still returns whatever was there before.
     // That window is short, and it used to look exactly like a foreign copy —
     // which disarmed every arm made in a terminal moments after it was made.
-    let mut owned_at = Instant::now();
-    let mut owned_len: Option<usize> = None;
+    // Keep this for the disarm path, but it does NOT reset after each drag
+    // (arm lifetime is only reset by disarm), because the arm’s contents
+    // are the right ones for paste, and a fresh drag should carry its new
+    // selection forward from the new press.
     // One take-back per arm. Reset on every arm and disarm.
     let mut reasserted = false;
     // One adoption of the app's newer selection per gesture, so two writers
