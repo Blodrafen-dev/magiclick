@@ -226,6 +226,27 @@ fn looks_like_same_selection(foreign: &str, armed: &str) -> bool {
     short.chars().count() >= 8 && long.contains(short.as_str())
 }
 
+/// Did PRIMARY move off the value it held when the gesture began?
+///
+/// Only this counts as a new primary selection. Holding still is not news — see
+/// `clipboard_is_news` for what that costs when it is mistaken for it.
+fn primary_moved(seen: u64, baseline: Option<u64>) -> bool {
+    Some(seen) != baseline
+}
+
+/// Does CLIPBOARD hold something neither we nor the gesture put there?
+///
+/// Excluding `owned` is deliberate, and the opposite of what this path used to
+/// do. The clipboard is where our own writes land, so it was argued that an
+/// unchanged read was likelier a drag that selected nothing than a deliberate
+/// repeat. That holds while PRIMARY is the stream that moves. It stops holding
+/// in a terminal that does its own selection: PRIMARY freezes at whatever it had
+/// while the app publishes the real selection to CLIPBOARD, and then the one
+/// stream that knows what the user just highlighted is the one being ignored.
+fn clipboard_is_news(seen: u64, clip_before: Option<u64>, owned: Option<u64>) -> bool {
+    Some(seen) != clip_before && Some(seen) != owned
+}
+
 /// Put the armed text back on the clipboard, and wait — briefly — for it to land.
 ///
 /// `ctrl+v` pastes the clipboard, not our copy of the text, so at the moment of
@@ -1024,12 +1045,25 @@ fn run() -> Result<()> {
                                             });
                                         }
                                     } else {
-                                        say!(
-                                            "clipboard now holds {} bytes, the arm holds {} — something else took it",
-                                            foreign.len(),
-                                            owned_len.unwrap_or(0)
-                                        );
-                                        ev = Event::ClipboardMoved;
+                                        // Our own write may not be visible immediately: wl-copy
+                                        // forks, and the child takes ownership a few ms later.
+                                        // Skip the disarming test while our write is settling.
+                                        if owned_at.elapsed() <= Duration::from_millis(300) {
+                                            continue;
+                                        }
+                                        // A single bad read is not a takeover. A real foreign copy
+                                        // still holds after 250ms; a race does not.
+                                        std::thread::sleep(Duration::from_millis(250));
+                                        let again = clip.clipboard().ok().flatten();
+                                        let still_foreign = matches!(again.as_ref(), Some(t) if Some(hash(t)) != owned_hash);
+                                        if still_foreign {
+                                            say!(
+                                                "clipboard now holds {} bytes, the arm holds {} — something else took it",
+                                                again.as_ref().map(|t| t.len()).unwrap_or(0),
+                                                owned_len.unwrap_or(0)
+                                            );
+                                            ev = Event::ClipboardMoved;
+                                        }
                                     }
                                 }
                             }
