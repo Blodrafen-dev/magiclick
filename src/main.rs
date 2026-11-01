@@ -140,6 +140,27 @@ fn is_new_selection(seen: u64, baseline: Option<u64>, owned: Option<u64>, settle
     Some(seen) != baseline || (settled && owned == Some(seen))
 }
 
+/// Did PRIMARY move off the value it held when the gesture began?
+///
+/// Only this counts as a new primary selection. Holding still is not news — see
+/// `clipboard_is_news` for what that costs when it is mistaken for it.
+fn primary_moved(seen: u64, baseline: Option<u64>) -> bool {
+    Some(seen) != baseline
+}
+
+/// Does CLIPBOARD hold something neither we nor the gesture put there?
+///
+/// Excluding `owned` is deliberate, and the opposite of what this path used to
+/// do. The clipboard is where our own writes land, so it was argued that an
+/// unchanged read was likelier a drag that selected nothing than a deliberate
+/// repeat. That holds while PRIMARY is the stream that moves. It stops holding
+/// in a terminal that does its own selection: PRIMARY freezes at whatever it had
+/// while the app publishes the real selection to CLIPBOARD, and then the one
+/// stream that knows what the user just highlighted is the one being ignored.
+fn clipboard_is_news(seen: u64, clip_before: Option<u64>, owned: Option<u64>) -> bool {
+    Some(seen) != clip_before && Some(seen) != owned
+}
+
 /// Whether the clipboard still needs our write.
 ///
 /// `owned_hash` is bookkeeping, not evidence. Between two selections of the same
@@ -167,6 +188,42 @@ fn must_write(owned: Option<u64>, h: u64, clip: &dyn Clipboard) -> bool {
 /// genuinely in use elsewhere: fail closed there rather than ping-pong.
 fn same_gesture(since_owned: Duration, reasserted: bool) -> bool {
     !reasserted && since_owned < Duration::from_millis(1500)
+}
+
+/// Letters and digits only, lowercased, so a re-serialisation of the same words
+/// compares equal: the same phrase with different spacing, padding or punctuation
+/// is the same selection, not a new one.
+fn folded(text: &str) -> String {
+    text.chars()
+        .filter(|c| c.is_alphanumeric())
+        .flat_map(|c| c.to_lowercase())
+        .collect()
+}
+
+/// Is a clipboard write the app's version of the selection we already carry?
+///
+/// A terminal UI that copies the selection it saw land rarely writes the same
+/// bytes: it copies its idea of the region — the whole line, trailing spaces,
+/// a different newline. Judging that by the clock alone was wrong in the
+/// expensive direction: within the gesture, *any* write looked like ours, so a
+/// genuinely new selection was thrown away and the previous arm pasted in its
+/// place. So compare the text. Containment either way means "the same words at
+/// a different extent", which is ours to keep.
+///
+/// Containment is only evidence when there is enough text to be evidence: a
+/// two-letter arm is inside half the lines on screen, and treating those as ours
+/// is how a stale arm gets pasted over something new.
+fn looks_like_same_selection(foreign: &str, armed: &str) -> bool {
+    let f = folded(foreign);
+    let a = folded(armed);
+    if f.is_empty() || a.is_empty() {
+        return false;
+    }
+    if f == a {
+        return true;
+    }
+    let (short, long) = if a.len() <= f.len() { (&a, &f) } else { (&f, &a) };
+    short.chars().count() >= 8 && long.contains(short.as_str())
 }
 
 /// Put the armed text back on the clipboard, and wait — briefly — for it to land.
@@ -427,6 +484,9 @@ fn run() -> Result<()> {
     let mut owned_len: Option<usize> = None;
     // One take-back per arm. Reset on every arm and disarm.
     let mut reasserted = false;
+    // One adoption of the app's newer selection per gesture, so two writers
+    // cannot ping-pong the clipboard between them.
+    let mut adopted = false;
     let mut enabled = runtime::control().map(|c| c != "off").unwrap_or(true);
     let mut published = String::new();
     let mut last_control_check = Instant::now();
@@ -558,7 +618,10 @@ fn run() -> Result<()> {
                     // A drag is selecting, not clicking a copy control. Close any
                     // window a previous click opened so the two paths cannot both
                     // claim the same copy.
+                    //
+                    // A new drag is a new gesture, so it earns a fresh adoption.
                     copy_click = None;
+                    adopted = false;
                     // The new selection is published some time after the button
                     // comes up. Ask the primary selection first — that is what a
                     // drag in a browser or a terminal actually sets — and only
@@ -570,12 +633,24 @@ fn run() -> Result<()> {
                     // sixteen times a second is what made the page stutter in
                     // the middle of a selection.
                     let started = Instant::now();
-                    let deadline = started + Duration::from_millis(400);
+                    let primary_deadline = started + Duration::from_millis(250);
+                    let clipboard_deadline = started + Duration::from_millis(440);
                     let mut picked: Option<(String, &'static str)> = None;
                     let mut last_p: Option<(usize, u64)> = None;
+                    let mut last_p_text: Option<String> = None;
                     let mut last_c: Option<(usize, u64)> = None;
 
-                    while Instant::now() < deadline {
+                    // Phase 1 — PRIMARY, and only if it actually moved.
+                    //
+                    // This loop used to also break when PRIMARY still held text
+                    // we already carry, on the theory that re-selecting the same
+                    // words is a new intent. That rule is only safe when nothing
+                    // else is talking. A terminal that does its own selection
+                    // freezes PRIMARY at whatever it held while the app publishes
+                    // the real selection to CLIPBOARD, so the rule re-armed the
+                    // stale text on every drag and the clipboard was then
+                    // overwritten with it: "it keeps pasting old copies".
+                    while Instant::now() < primary_deadline {
                         std::thread::sleep(Duration::from_millis(40));
                         let Ok(Some(t)) = clip.primary() else {
                             continue;
@@ -585,26 +660,41 @@ fn run() -> Result<()> {
                         }
                         let h = hash(&t);
                         last_p = Some((t.len(), h));
-                        let settled = started.elapsed() >= Duration::from_millis(120);
-                        if is_new_selection(h, primary_before, owned_hash, settled) {
+                        if primary_moved(h, primary_before) {
                             picked = Some((t, "primary"));
                             break;
                         }
+                        last_p_text = Some(t);
                     }
 
+                    // Phase 2 — CLIPBOARD, and before the re-selection rule.
+                    //
+                    // A stream that moved is better evidence than a stream that
+                    // is holding still, so this is asked first. Only reached when
+                    // PRIMARY had nothing new to say.
                     if picked.is_none() {
-                        // One look only, for apps that never publish primary.
-                        if let Ok(Some(t)) = clip.clipboard() {
-                            if !t.is_empty() {
-                                let h = hash(&t);
-                                last_c = Some((t.len(), h));
-                                // No `owned` here on purpose: the clipboard is
-                                // where our own writes land, so an unchanged
-                                // read is far more likely to be a drag that
-                                // selected nothing than a deliberate repeat.
-                                if is_new_selection(h, clip_before, None, true) {
-                                    picked = Some((t, "clipboard"));
+                        while Instant::now() < clipboard_deadline {
+                            if let Ok(Some(t)) = clip.clipboard() {
+                                if !t.is_empty() {
+                                    let h = hash(&t);
+                                    last_c = Some((t.len(), h));
+                                    if clipboard_is_news(h, clip_before, owned_hash) {
+                                        picked = Some((t, "clipboard"));
+                                        break;
+                                    }
                                 }
+                            }
+                            std::thread::sleep(Duration::from_millis(40));
+                        }
+                    }
+
+                    // Phase 3 — nothing moved anywhere, so the re-selection rule
+                    // is admissible: PRIMARY holding the text we already carry is
+                    // the only evidence there is, and nothing contradicted it.
+                    if picked.is_none() {
+                        if let Some(text) = last_p_text {
+                            if is_new_selection(hash(&text), primary_before, owned_hash, true) {
+                                picked = Some((text, "primary"));
                             }
                         }
                     }
@@ -865,29 +955,74 @@ fn run() -> Result<()> {
                                     Some(t) if Some(hash(t)) != owned_hash
                                 );
                                 if still_foreign {
-                                    // Same gesture? Then the app we selected in
-                                    // re-published its own copy over ours, and
-                                    // the arm is still what the user highlighted:
-                                    // take the clipboard back once and stay armed.
-                                    let take_back = router
-                                        .armed_selection()
-                                        .cloned()
-                                        .filter(|_| same_gesture(owned_at.elapsed(), reasserted))
-                                        .filter(|sel| clip.set_clipboard(&sel.text).is_ok());
-                                    if let Some(sel) = take_back {
-                                        reasserted = true;
-                                        say!(
-                                            "the app re-published {} bytes of its own within the gesture — took the clipboard back, still armed on {} bytes",
-                                            again.as_ref().map(|t| t.len()).unwrap_or(0),
-                                            sel.len
-                                        );
-                                        owned_at = Instant::now();
-                                        owned_hash = Some(sel.hash);
-                                        owned_len = Some(sel.len);
+                                    // Two different things can land here, and
+                                    // they need opposite answers:
+                                    //
+                                    //  * the app we selected in re-publishing the
+                                    //    selection we already carry, at a
+                                    //    different extent — ours is the precise
+                                    //    one, so take the clipboard back once;
+                                    //  * the app publishing a *new* selection —
+                                    //    taking the clipboard back then throws
+                                    //    away the thing the user just selected
+                                    //    and pastes the previous arm instead,
+                                    //    which is the stale-paste bug in the
+                                    //    field. The newer text wins.
+                                    let foreign = again.unwrap_or_default();
+                                    let armed = router.armed_selection().cloned();
+                                    let in_gesture = same_gesture(owned_at.elapsed(), reasserted);
+                                    let same_text = armed.as_ref().is_some_and(|sel| {
+                                        in_gesture && looks_like_same_selection(&foreign, &sel.text)
+                                    });
+                                    if same_text {
+                                        let sel = armed.expect("same_text implies an arm");
+                                        if clip.set_clipboard(&sel.text).is_ok() {
+                                            reasserted = true;
+                                            say!(
+                                                "the app re-published the same selection as {} bytes within the gesture — took the clipboard back, still armed on {} bytes",
+                                                foreign.len(),
+                                                sel.len
+                                            );
+                                            owned_at = Instant::now();
+                                            owned_hash = Some(sel.hash);
+                                            owned_len = Some(sel.len);
+                                        } else {
+                                            say!("clipboard write failed — the arm cannot be pasted now");
+                                            ev = Event::ClipboardMoved;
+                                        }
+                                    } else if in_gesture
+                                        && !adopted
+                                        && !foreign.is_empty()
+                                        && foreign.len() <= cfg.max_bytes
+                                    {
+                                        let text = core::trim_selection(&foreign).to_string();
+                                        if !text.is_empty() {
+                                            let h = hash(&text);
+                                            if let Err(e) = clip.set_clipboard(&text) {
+                                                say!("clipboard write failed: {e}");
+                                            }
+                                            adopted = true;
+                                            owned_hash = Some(h);
+                                            owned_at = Instant::now();
+                                            owned_len = Some(text.len());
+                                            clip_before = Some(h);
+                                            let app = source_app();
+                                            say!(
+                                                "the clipboard changed to different text ({} bytes) within the gesture — carrying that instead of the {} bytes armed",
+                                                text.len(),
+                                                armed.as_ref().map(|s| s.len).unwrap_or(0)
+                                            );
+                                            ev = Event::DragCopied(Selection {
+                                                hash: h,
+                                                len: text.len(),
+                                                source_app: app,
+                                                text,
+                                            });
+                                        }
                                     } else {
                                         say!(
                                             "clipboard now holds {} bytes, the arm holds {} — something else took it",
-                                            again.as_ref().map(|t| t.len()).unwrap_or(0),
+                                            foreign.len(),
                                             owned_len.unwrap_or(0)
                                         );
                                         ev = Event::ClipboardMoved;
@@ -920,6 +1055,7 @@ fn run() -> Result<()> {
             Outcome::Disarmed(reason) => {
                 last_arm = None;
                 reasserted = false;
+                adopted = false;
                 say!("disarmed — {reason}")
             }
             Outcome::Fire => {
@@ -1151,6 +1287,128 @@ mod tests {
     fn a_late_takeover_is_someone_else_copying() {
         // Past the gesture, the clipboard is being used by the user elsewhere.
         assert!(!same_gesture(Duration::from_secs(3), false));
+    }
+
+    #[test]
+    fn a_frozen_primary_yields_to_the_clipboard_the_app_wrote() {
+        // The field bug, in one line. A terminal doing its own selection leaves
+        // PRIMARY at whatever it held; the app publishes the real selection to
+        // CLIPBOARD. The old rule read "PRIMARY still holds the text we carry"
+        // as a deliberate re-selection (`is_new_selection` says true because
+        // `owned == seen`), re-armed the stale text, and overwrote the app's
+        // write with it. Every paste after that was an older copy.
+        let stale = "second machine to test the multi-monito";
+        let fresh = "  a completely different line the user just highlighted\n";
+        let baseline = Some(hash(stale));
+
+        assert!(is_new_selection(
+            hash(stale),
+            baseline,
+            Some(hash(stale)),
+            true
+        ));
+        // ...which is why PRIMARY must be judged by movement alone.
+        assert!(!primary_moved(hash(stale), baseline));
+        // ...and why the stream that moved gets asked before the rule above.
+        assert!(clipboard_is_news(
+            hash(fresh),
+            Some(hash(stale)),
+            Some(hash(stale))
+        ));
+    }
+
+    #[test]
+    fn our_own_clipboard_write_is_not_news() {
+        // copy_on_drag writes what it armed, so the next drag sees its own text
+        // on the clipboard. That is not a selection, and treating it as one
+        // would re-arm the same text forever without a real drag.
+        let ours = "what we armed last time";
+        assert!(!clipboard_is_news(
+            hash(ours),
+            Some(hash(ours)),
+            Some(hash(ours))
+        ));
+        // A clipboard that was taken from us between gestures is a different
+        // matter: we do not own what is there, so a coincidental match on the
+        // baseline is not proof that nothing happened.
+        assert!(clipboard_is_news(
+            hash("someone else's copy"),
+            Some(hash("stale baseline")),
+            Some(hash(ours))
+        ));
+    }
+
+    #[test]
+    fn a_moved_primary_still_wins() {
+        // PRIMARY moving is authoritative: browsers and GTK apps put the real
+        // selection there, and it is the precise region the user dragged.
+        assert!(primary_moved(
+            hash("the new words"),
+            Some(hash("the old words"))
+        ));
+        // First selection of a session has no baseline at all.
+        assert!(primary_moved(hash("anything"), None));
+    }
+
+    #[test]
+    fn a_flaky_keyboard_copy_differs_from_what_we_carry() {
+        // A ghost Ctrl+C shows up here as "the clipboard moved". It is
+        // indistinguishable from the app's own write, which is why the log line
+        // names the byte counts: see the disarm path.
+        assert!(clipboard_is_news(
+            hash("a stranger's copy"),
+            Some(hash("what we armed")),
+            Some(hash("what we armed"))
+        ));
+    }
+
+    #[test]
+    fn a_longer_copy_of_the_arm_is_the_same_selection() {
+        // The TUI copied the whole line; we hold the phrase inside it.
+        assert!(looks_like_same_selection(
+            "  second machine to test the multi-monitor and second-compositor paths\n",
+            "second machine to test the multi-monito"
+        ));
+    }
+
+    #[test]
+    fn a_shorter_copy_of_the_arm_is_the_same_selection() {
+        assert!(looks_like_same_selection(
+            "multi-monitor",
+            "second machine to test the multi-monitor"
+        ));
+    }
+
+    #[test]
+    fn different_words_are_a_new_selection() {
+        // Not a re-serialisation of ours: the app published something else, and
+        // taking the clipboard back would paste the stale arm over it.
+        assert!(!looks_like_same_selection(
+            "the other thing entirely",
+            "second machine to test the multi-monitor"
+        ));
+    }
+
+    #[test]
+    fn spacing_case_and_punctuation_do_not_make_it_new() {
+        assert!(looks_like_same_selection(
+            "Second  Machine, to test.",
+            "second machine to test"
+        ));
+    }
+
+    #[test]
+    fn a_tiny_arm_is_never_matched_by_containment() {
+        // "of" is inside half the lines on screen; containment there is not
+        // evidence that the app re-published anything of ours.
+        assert!(!looks_like_same_selection("of the thing", "of"));
+        assert!(looks_like_same_selection("of", "of"));
+    }
+
+    #[test]
+    fn empty_text_is_never_the_same_selection() {
+        assert!(!looks_like_same_selection("", "second machine"));
+        assert!(!looks_like_same_selection("second machine", ""));
     }
 
     #[test]
