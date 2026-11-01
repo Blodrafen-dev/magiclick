@@ -21,6 +21,10 @@ pub struct Config {
     pub arm_on_copy: ArmOnCopy,
     /// How long after a click a copy still counts as caused by that click.
     pub copy_click_window_ms: u64,
+    /// Two clicks closer together than this are one multi-click. An armed
+    /// confirm is also held this long, so a double-click selects instead of
+    /// pasting over the word it highlights.
+    pub multi_click_ms: u64,
     /// Refuse to carry selections larger than this. Guards pastejacking-ish mistakes.
     pub max_bytes: usize,
 }
@@ -54,6 +58,7 @@ impl Default for Config {
             copy_on_drag: true,
             arm_on_copy: ArmOnCopy::Click,
             copy_click_window_ms: 600,
+            multi_click_ms: 300,
             max_bytes: 64 * 1024,
         }
     }

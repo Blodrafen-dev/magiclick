@@ -181,6 +181,31 @@ struct AtPress {
     sampled: bool,
 }
 
+/// The window a click opens for a copy it may have caused.
+///
+/// Both baselines are the ones sampled when the button went down, never the last
+/// text the daemon copied. That distinction is the whole guarantee: with the old
+/// PRIMARY baseline, a selection the daemon had not itself copied (a page's own
+/// selection, a keyboard selection, anything from before startup) differed from it
+/// on *every* click, so a click that copied nothing armed that text and the next
+/// click pasted it.
+#[derive(Debug, Clone, Copy)]
+struct CopyWindow {
+    opened: Instant,
+    primary: Option<u64>,
+    clipboard: Option<u64>,
+}
+
+/// Is this release the second half of a multi-click?
+///
+/// Two releases inside the same window are one gesture: the user is selecting a
+/// word, or a line, not confirming a paste. Nothing at release time can tell the
+/// difference, which is why an armed confirm is deferred by this same window
+/// before it fires.
+fn is_multi_click(previous: Option<Instant>, now: Instant, window: Duration) -> bool {
+    previous.is_some_and(|t| now.saturating_duration_since(t) < window)
+}
+
 /// Read both streams off the event loop, once per button press.
 ///
 /// Two transfers per press is affordable. Blocking the router for up to 800ms on
@@ -357,9 +382,9 @@ fn release_left_a_selection(
 /// but a click that collapses a selection *clears* primary, and a cleared
 /// primary is not a copy, so empty reads are ignored.
 ///
-/// The baseline was sampled at the moment of the click, so anything that differs
-/// from it arrived afterwards. That ordering is the whole guarantee: a copy made
-/// before the click cannot arm.
+/// Both baselines were sampled when the button went down, so anything that
+/// differs from them arrived afterwards. That ordering is the whole guarantee: a
+/// copy made before the click cannot arm.
 fn copy_since_click(
     clip: &dyn Clipboard,
     clip_base: Option<u64>,
@@ -567,9 +592,15 @@ fn run() -> Result<()> {
     // A click with nothing armed opens a short window. If a copy lands inside
     // it, that copy was caused by the click — a copy glyph, or "Copy link
     // address" — and arms exactly like a drag would.
-    let mut copy_click: Option<Instant> = None;
-    let mut copy_click_base: Option<u64> = None;
+    let mut copy_click: Option<CopyWindow> = None;
     let mut last_copy_poll = Instant::now();
+
+    // An armed confirm, held for one double-click interval. Firing on the
+    // release cannot tell a click from the first half of a double-click, and the
+    // second press selects a word — so the paste landed on top of the word being
+    // selected. Resolved on a tick; a press inside the window cancels it.
+    let mut pending_click: Option<Instant> = None;
+    let mut last_click_release: Option<Instant> = None;
     // What both streams held when the button went down. A click confirms, and
     // only a change since *this press* is a selection: the older baselines
     // predate the press, so anything an app published after our arm would
@@ -674,6 +705,18 @@ fn run() -> Result<()> {
                 }
                 match input {
                     drag::Input::Press if enabled => {
+                        // A press inside the double-click window means the click
+                        // before it was half a multi-click: whatever it was about
+                        // to confirm or arm is void, because this press is
+                        // selecting text.
+                        if is_multi_click(
+                            last_click_release,
+                            Instant::now(),
+                            Duration::from_millis(cfg.multi_click_ms),
+                        ) {
+                            pending_click = None;
+                            copy_click = None;
+                        }
                         // Sample both streams before this gesture can change them.
                         //
                         // This used to be skipped while nothing was armed, on the
@@ -858,9 +901,39 @@ fn run() -> Result<()> {
                         }
                     }
                     drag::Input::Click(_) if enabled && !short_drag => {
-                        // Diagnosis: a click that lands after the arm expired looks
-                        // identical to "nothing happened" from the outside. Say so.
-                        if !router.is_armed() {
+                        let now = Instant::now();
+                        let multi = is_multi_click(
+                            last_click_release,
+                            now,
+                            Duration::from_millis(cfg.multi_click_ms),
+                        );
+                        last_click_release = Some(now);
+                        if multi {
+                            // A second click inside the double-click window is one
+                            // gesture: selecting a word, or a line. It neither
+                            // confirms the arm nor opens a copy window — the text
+                            // under the pointer was being selected, not copied — and
+                            // the arm it would have pasted over goes with it.
+                            pending_click = None;
+                            copy_click = None;
+                            if router.is_armed() {
+                                say!(
+                                    "a multi-click selects text — dropped the arm instead of pasting into the selection"
+                                );
+                                Event::Interference("multi-click")
+                            } else {
+                                continue;
+                            }
+                        } else if router.is_armed() {
+                            // Standing alone so far, so this is the confirm — but it
+                            // is held for one double-click interval first. Firing on
+                            // the release pasted on top of the word a double-click
+                            // was about to select. The tick below resolves it.
+                            pending_click = Some(now);
+                            continue;
+                        } else {
+                            // Diagnosis: a click that lands after the arm expired
+                            // looks identical to "nothing happened" from the outside.
                             if let Some(t) = last_arm {
                                 let age = t.elapsed();
                                 if age < Duration::from_secs(60) {
@@ -875,44 +948,24 @@ fn run() -> Result<()> {
                             // copy glyphs, "Copy link address" and every other
                             // "this click copied something" case begin here.
                             //
-                            // The baseline is sampled now rather than trusted from
-                            // the last drag. A Ctrl+C since then would otherwise look
-                            // like a copy this click caused.
+                            // Both baselines are this gesture's press snapshot. The
+                            // old code used the live clipboard plus the daemon's last
+                            // copied PRIMARY, which armed the previous selection on
+                            // every click in an app that keeps its own selection alive.
                             if cfg.arm_on_copy == ArmOnCopy::Click {
-                                copy_click = Some(Instant::now());
-                                let base = clip.clipboard().ok().flatten().map(|t| hash(&t));
-                                copy_click_base = base;
-                                clip_before = base;
+                                copy_click = Some(CopyWindow {
+                                    opened: now,
+                                    primary: at_press.primary,
+                                    clipboard: at_press.clipboard,
+                                });
                                 last_copy_poll = Instant::now();
                             }
                             continue;
                         }
-                        // Bar, desktop, layer surface: never a text field, and always
-                        // a navigation gesture — "which desktop / which window".
-                        // Stay armed and say nothing: pasting here is what erased a
-                        // prompt, and disarming here would kill the very flow the
-                        // user is performing (select -> switch desktop -> click).
-                        if router.is_armed()
-                            && compositor::click_target() == compositor::Target::NoWindow
-                        {
-                            say!("click landed on the bar or desktop — kept armed, nothing pasted");
-                            continue;
-                        }
-                        // The click must actually focus what was clicked before any
-                        // key goes out, or the chord lands in the window that was
-                        // focused a moment ago (browser click, terminal paste).
-                        if router.is_armed()
-                            && !compositor::wait_for_focus(Duration::from_millis(400))
-                        {
-                            say!(
-                                "the clicked window never took focus — kept armed, click inside it"
-                            );
-                            continue;
-                        }
-                        Event::Click
                     }
                     drag::Input::Confirm if enabled => {
                         copy_click = None;
+                        pending_click = None;
                         Event::Confirm
                     }
                     drag::Input::Cancel if enabled => {
@@ -920,19 +973,28 @@ fn run() -> Result<()> {
                         // item that does the copying is a click or two away. Disarm
                         // as always, and open the same window for the copy that the
                         // menu is about to make.
+                        pending_click = None;
                         if cfg.arm_on_copy == ArmOnCopy::Click {
-                            copy_click = Some(Instant::now());
-                            let base = clip.clipboard().ok().flatten().map(|t| hash(&t));
-                            copy_click_base = base;
-                            clip_before = base;
+                            // A right press is not a left press, so there is no
+                            // press snapshot to borrow — and the daemon's last
+                            // copied PRIMARY is exactly the baseline that armed
+                            // the previous selection on every right-click. Read
+                            // both streams now: anything already there is old.
+                            copy_click = Some(CopyWindow {
+                                opened: Instant::now(),
+                                primary: clip.primary().ok().flatten().map(|t| hash(&t)),
+                                clipboard: clip.clipboard().ok().flatten().map(|t| hash(&t)),
+                            });
                             last_copy_poll = Instant::now();
                         }
                         Event::Interference("right-clicked")
                     }
                     drag::Input::KeyCode if enabled => {
                         // Typing means the click window is over: nothing about a
-                        // keystroke suggests a copy glyph was pressed.
+                        // keystroke suggests a copy glyph was pressed. It also
+                        // means a held-back confirm is stale — you moved on.
                         copy_click = None;
+                        pending_click = None;
                         Event::Interference("typed")
                     }
                     _ => continue,
@@ -945,15 +1007,39 @@ fn run() -> Result<()> {
                 // The copy window. Polling starts only when a click opened one,
                 // so an idle daemon still touches the clipboard exactly as often
                 // as it used to: never.
-                if let Some(at) = copy_click {
-                    if now.saturating_duration_since(at)
+                // A click held back for one double-click interval, with no
+                // second press following it: it was a confirm after all. The
+                // guards run here, at fire time, because the caret only exists
+                // once that click has landed.
+                if let Some(at) = pending_click
+                    && now.saturating_duration_since(at)
+                        >= Duration::from_millis(cfg.multi_click_ms)
+                {
+                    pending_click = None;
+                    if router.is_armed() {
+                        // Bar, desktop, layer surface: never a text field, and
+                        // always a navigation gesture.
+                        if compositor::click_target() == compositor::Target::NoWindow {
+                            say!("click landed on the bar or desktop — kept armed, nothing pasted");
+                        } else if !compositor::wait_for_focus(Duration::from_millis(400)) {
+                            say!(
+                                "the clicked window never took focus — kept armed, click inside it"
+                            );
+                        } else {
+                            ev = Event::Click;
+                        }
+                    }
+                }
+
+                if let Some(w) = copy_click {
+                    if now.saturating_duration_since(w.opened)
                         >= Duration::from_millis(cfg.copy_click_window_ms)
                     {
                         copy_click = None;
                     } else if last_copy_poll.elapsed() >= Duration::from_millis(50) {
                         last_copy_poll = now;
                         if let Some((text, from)) =
-                            copy_since_click(&*clip, copy_click_base, primary_before, owned_hash)
+                            copy_since_click(&*clip, w.clipboard, w.primary, owned_hash)
                         {
                             copy_click = None;
                             // Same normalisation as a drag: `wl-copy -n` cannot
@@ -1135,6 +1221,7 @@ fn run() -> Result<()> {
             Outcome::None => {}
             Outcome::Armed => {
                 last_arm = Some(Instant::now());
+                pending_click = None;
                 reasserted = false;
                 if let Some(sel) = router.armed_selection() {
                     say!(
@@ -1146,6 +1233,7 @@ fn run() -> Result<()> {
             }
             Outcome::Disarmed(reason) => {
                 last_arm = None;
+                pending_click = None;
                 reasserted = false;
                 adopted = false;
                 say!("disarmed — {reason}")
@@ -1561,6 +1649,40 @@ mod tests {
         assert_eq!(got, Some(("new".to_string(), "clipboard")));
         clip.set_clipboard("new").unwrap();
         assert_eq!(*clip.written.borrow(), vec!["new".to_string()]);
+    }
+
+    #[test]
+    fn a_second_click_inside_the_window_is_one_gesture() {
+        let t = Instant::now();
+        let window = Duration::from_millis(300);
+        assert!(is_multi_click(
+            Some(t),
+            t + Duration::from_millis(120),
+            window
+        ));
+        assert!(!is_multi_click(
+            Some(t),
+            t + Duration::from_millis(300),
+            window
+        ));
+        assert!(
+            !is_multi_click(None, t, window),
+            "the first click of a burst is free to confirm"
+        );
+    }
+
+    #[test]
+    fn a_click_that_changed_neither_stream_arms_nothing() {
+        // The regression: PRIMARY held a selection the daemon never copied, so
+        // against the old baseline it looked new on every click in that app.
+        // Every click armed it, and the click after it pasted it.
+        let clip = Fake::new(Some("the page's own selection"), Some("an older copy"));
+        let primary_base = Some(hash("the page's own selection"));
+        let clipboard_base = Some(hash("an older copy"));
+        assert_eq!(
+            copy_since_click(&clip, clipboard_base, primary_base, None),
+            None
+        );
     }
 
     #[test]

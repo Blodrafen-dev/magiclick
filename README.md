@@ -25,7 +25,7 @@ prediction engine. It is a tripwire that is easy to arm and easy to disarm.
 | # | Rule |
 |---|---|
 | 1 | Arm on selection — a drag, **or a click that copied** (copy glyphs, "Copy link address"). Re-selecting the pending text does not extend the arm. |
-| 2 | Click IS confirm when armed. No separate confirm gesture needed. |
+| 2 | Click IS confirm when armed — once it is known to stand alone. A second click inside `multi_click_ms` is a selection, so it neither pastes nor arms. |
 | 3 | One shot, then disarm |
 | 4 | Anything else disarms (fail closed) |
 | 5 | Stale for `arm_timeout_ms` (30s by default), disarm |
@@ -39,14 +39,18 @@ drag-only trigger never sees it.
 MagiClick does, without touching the browser. A click with no drag, followed
 within `copy_click_window_ms` (600 ms) by a clipboard change **it did not
 write**, is a copy you asked for — and it arms exactly like a drag does. The
-clipboard baseline is sampled at the moment of the click, so a copy you made
-earlier (a `Ctrl+C`, or something already sitting on the clipboard) can never
-be mistaken for one this click caused.
+baselines for both streams are sampled when the button goes down, so a copy you
+made earlier (a `Ctrl+C`, a selection the app already had, anything from before
+startup) can never be mistaken for one this click caused. Right-click opens the
+same window for "Copy link address", with fresh baselines too.
 
 Turn it off with `arm_on_copy = "off"` in your config.
 
 Rule 2 is the one that makes it work: when armed, a single click places the
-caret and pastes immediately (one-shot). A stray click after arming still fires,
+caret and pastes (one-shot). The paste waits out `multi_click_ms` (300 ms)
+first, because a second click inside that window means you are selecting a word —
+so a double-click never lands a paste on the text it just highlighted, and never
+arms that word either. A stray click after arming still fires,
 so the timeout (Rule 5) is your safety net — it disarms before any random click
 turns accidental. Right-click the bar glyph for a menu of 1x, 2x, 3x and 4x of
 the configured value (30s, 60s, 90s, 120s by default), each labelled with the

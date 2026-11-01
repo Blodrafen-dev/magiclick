@@ -41,6 +41,12 @@ arm_on_copy = "click"
 # happened to be followed by some unrelated copy.
 copy_click_window_ms = 600
 
+# Two clicks closer together than this are one gesture. A double-click selects a
+# word, so it never pastes over it and never arms it as a copy; a lone click is
+# held this long before it is allowed to confirm. Raise it if your double-clicks
+# are slower than 300 ms and a paste lands on the word you meant to select.
+multi_click_ms = 300
+
 # Refuse to carry anything larger than this. A 4MB blob is almost never
 # something you meant to paste into an editable field.
 max_bytes = 65536
